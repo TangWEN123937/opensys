@@ -1,0 +1,52 @@
+# ==================== OpenSys 出站域名白名单 ====================
+# AI Agent 容器只能访问以下域名
+# 格式：每行一个域名，.开头表示包含所有子域名
+
+# --- 大模型 API ---
+# DeepSeek
+.deepseek.com
+
+# OpenAI
+.openai.com
+
+# Anthropic (Claude)
+.anthropic.com
+
+# Google AI (Gemini)
+.googleapis.com
+.google.com
+
+# 阿里云（通义千问）
+.aliyuncs.com
+.dashscope.aliyuncs.com
+
+# 智谱 AI (GLM)
+.bigmodel.cn
+
+# MiniMax
+.minimaxi.com
+
+# 第三方 API 代理
+.dmxapi.cn
+
+# --- 包管理器（允许 AI 安装工具） ---
+# Python
+.pypi.org
+.pythonhosted.org
+
+# Node.js
+.npmjs.org
+.npmjs.com
+.registry.npmjs.org
+
+# Ubuntu APT
+.ubuntu.com
+.archive.ubuntu.com
+
+# --- 代码托管（允许 AI 拉取代码） ---
+.github.com
+.githubusercontent.com
+.githubassets.com
+
+# --- 搜索与文档 ---
+# 暂不开放，需要时由用户审批添加

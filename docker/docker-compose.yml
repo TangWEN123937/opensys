@@ -1,0 +1,116 @@
+# ==================== OpenSys 一键部署 ====================
+# 包含：AI Agent 容器 + Squid 代理网关
+#
+# 使用方法：
+#   cd docker/
+#   docker compose up -d
+#
+# 访问：
+#   API 文档: http://localhost:8001/docs
+#   CLI 交互: docker compose exec agent python -m agent cli
+
+services:
+  # --- AI Agent 容器 ---
+  agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: opensys-agent
+    restart: unless-stopped
+
+    # 端口映射
+    ports:
+      - "${OPENSYS_API_PORT:-8010}:8000"
+
+    # 数据卷
+    volumes:
+      # 持久化数据（SQLite、审批记忆、审计日志、记忆文档）
+      # 绑定挂载到宿主机 data/ 目录，方便直接查看和编辑 memory.md
+      - ./../data:/app/data
+      # 用户工作目录（只读挂载，AI 可以读但不能改原始文件）
+      # 把文件放到宿主机 workspace/ 目录，AI 即可在 /workspace 中读取
+      - ${WORKSPACE_PATH:-./../workspace}:/workspace:ro
+      # 输出目录（AI 的产出物，绑定到宿主机 output/ 目录）
+      # AI 产出的文件可在宿主机 output/ 目录直接查看
+      - ./../output:/app/output
+
+    # 环境变量
+    env_file:
+      - ../.env
+
+    environment:
+      - OPENSYS_DATA_DIR=/app/data
+      # 代理网关配置（容器内通过服务名 squid 访问）
+      - OPENSYS_PROXY_HOST=squid
+      - OPENSYS_PROXY_PORT=3128
+      - HTTP_PROXY=http://squid:3128
+      - HTTPS_PROXY=http://squid:3128
+      - http_proxy=http://squid:3128
+      - https_proxy=http://squid:3128
+      # 不代理的地址（Ollama 本地模型 + 容器内部通信）
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal,ollama
+      - no_proxy=localhost,127.0.0.1,host.docker.internal,ollama
+      # Ollama 在容器内通过 host.docker.internal 访问宿主机
+      - OPENSYS_OLLAMA_API_BASE=http://host.docker.internal:11434
+
+    # 安全配置
+    # cap_drop:
+    #   - ALL                        # 移除所有 Linux capabilities
+    # cap_add:
+    #   - NET_RAW                    # 允许 ping（调试用）
+    # read_only: true                # 只读根文件系统（MVP 阶段先关闭，稳定后开启）
+    # tmpfs:
+    #   - /tmp:size=512m
+    #   - /var/tmp:size=256m
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+        reservations:
+          memory: 1G
+          cpus: "0.5"
+
+    # 允许容器内通过 host.docker.internal 访问宿主机（Ollama 等本地服务）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # 依赖 Squid 代理
+    depends_on:
+      - squid
+
+    # 网络
+    networks:
+      - opensys-net
+
+  # --- Squid 代理网关 ---
+  squid:
+    image: ubuntu/squid:latest
+    container_name: opensys-squid
+    restart: unless-stopped
+
+    # 挂载配置文件
+    volumes:
+      - ./squid/squid.conf:/etc/squid/squid.conf:ro
+      - ./squid/whitelist.txt:/etc/squid/whitelist.txt:ro
+      - squid-logs:/var/log/squid
+
+    # 不暴露端口到宿主机（只在内部网络可用）
+    # ports:
+    #   - "3128:3128"
+
+    networks:
+      - opensys-net
+
+# --- 数据卷 ---
+volumes:
+  squid-logs:
+    name: opensys-squid-logs
+
+# --- 网络 ---
+networks:
+  opensys-net:
+    name: opensys-network
+    driver: bridge
