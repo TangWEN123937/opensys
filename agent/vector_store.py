@@ -1,9 +1,8 @@
 """
 OpenSys 向量存储管理器
 
-基于 ChromaDB 实现向量化混合检索，包含两个集合：
-1. conversation_memory — 对话记忆：超阈值后将旧对话切片入库，替代摘要压缩
-2. script_knowledge — 脚本知识库：AI编写的脚本自动入库，避免重复编写
+基于 ChromaDB 实现向量化混合检索，包含一个集合：
+conversation_memory — 对话记忆：超阈值后将旧对话切片入库，替代摘要压缩
 
 检索方式：向量相似度 + 关键词过滤（ChromaDB where_document）混合检索
 Embedding：调用本地 BGE-M3 服务（http://localhost:8100/api/v1/embed）
@@ -11,7 +10,6 @@ Embedding：调用本地 BGE-M3 服务（http://localhost:8100/api/v1/embed）
 设计要点：
 - 对话切片以 finish_reason='stop' 的 AIMessage 为界，一个完整交互轮次为一片
 - 入库时只存 HumanMessage + AIMessage(stop) 文本，中间工具调用仅存 metadata
-- 脚本以文件路径为唯一 ID（upsert 语义），通过余弦相似度判断是否需要更新
 """
 
 import time
@@ -25,19 +23,15 @@ from . import config
 
 
 class VectorStoreManager:
-    """ChromaDB 向量存储管理器（两个集合：对话记忆 + 脚本知识库）"""
+    """ChromaDB 向量存储管理器（对话记忆集合）"""
 
     def __init__(self):
         # 持久化 ChromaDB 客户端
         self._client = chromadb.PersistentClient(path=str(config.CHROMA_DB_DIR))
 
-        # 获取或创建两个集合（使用余弦相似度）
+        # 获取或创建对话记忆集合（使用余弦相似度）
         self._conversations = self._client.get_or_create_collection(
             name=config.CHROMA_COLLECTION_CONVERSATIONS,
-            metadata={"hnsw:space": "cosine"},
-        )
-        self._scripts = self._client.get_or_create_collection(
-            name=config.CHROMA_COLLECTION_SCRIPTS,
             metadata={"hnsw:space": "cosine"},
         )
 
@@ -214,152 +208,12 @@ class VectorStoreManager:
 
         return items
 
-    # ==================== 脚本知识库集合 ====================
-
-    async def store_script(
-        self,
-        file_path: str,
-        script_content: str,
-        language: str,
-        description: str,
-        thread_id: str = "",
-    ) -> bool:
-        """
-        存储或更新脚本到知识库（以文件路径为唯一 ID，自动去重）
-
-        去重逻辑：
-        1. 路径不存在 → 新脚本，直接入库
-        2. 路径已存在 → 计算新旧 embedding 余弦相似度
-           - > 阈值 → 小幅修改，不更新
-           - ≤ 阈值 → 大幅重写，覆盖更新
-
-        Args:
-            file_path: 脚本文件绝对路径（作为唯一 ID）
-            script_content: 脚本代码全文
-            language: 脚本语言（python/bash/node）
-            description: AI 对脚本用途的描述
-            thread_id: 创建该脚本的对话线程 ID
-
-        Returns:
-            True 表示已入库/更新，False 表示跳过（小幅修改）
-        """
-        # embedding 文本 = 描述 + 代码前 512 字符（BGE-M3 max_seq_length=512）
-        code_preview = script_content[:512] if len(script_content) > 512 else script_content
-        embed_text = f"{description}\n{code_preview}"
-
-        try:
-            new_embedding = await self._get_single_embedding(embed_text)
-        except Exception as e:
-            print(f"[脚本知识库] Embedding 调用失败: {e}")
-            return False
-
-        # 检查是否已存在
-        doc_id = file_path  # 文件路径作为唯一 ID
-        existing = self._scripts.get(ids=[doc_id], include=["embeddings"])
-
-        if existing and existing["ids"]:
-            # 已存在：计算余弦相似度
-            old_embedding = existing["embeddings"][0]
-            similarity = _cosine_similarity(old_embedding, new_embedding)
-
-            if similarity > config.SCRIPT_SIMILARITY_THRESHOLD:
-                print(
-                    f"[脚本知识库] 跳过更新（相似度 {similarity:.3f} > {config.SCRIPT_SIMILARITY_THRESHOLD}）: {file_path}"
-                )
-                return False
-
-            print(f"[脚本知识库] 大幅修改，覆盖更新（相似度 {similarity:.3f}）: {file_path}")
-
-        # 存储的完整文档（描述 + 完整代码，用于检索展示）
-        doc_text = f"描述: {description}\n语言: {language}\n路径: {file_path}\n代码:\n{script_content}"
-        if len(doc_text) > 5000:
-            doc_text = doc_text[:5000]
-
-        # upsert 到 ChromaDB
-        self._scripts.upsert(
-            ids=[doc_id],
-            embeddings=[new_embedding],
-            metadatas=[{
-                "file_path": file_path,
-                "language": language,
-                "description": description[:500],  # metadata 值不宜过长
-                "thread_id": thread_id,
-                "updated_at": time.time(),
-            }],
-            documents=[doc_text],
-        )
-
-        print(f"[脚本知识库] 已入库: {file_path} ({language})")
-        return True
-
-    async def search_scripts(
-        self,
-        query: str,
-        language: Optional[str] = None,
-        top_k: int = 5,
-        keyword_filter: Optional[str] = None,
-    ) -> list[dict]:
-        """
-        混合检索脚本知识库（向量相似度 + 可选语言/关键词过滤）
-
-        Args:
-            query: 检索查询文本（描述需求或功能）
-            language: 可选，限定脚本语言
-            top_k: 返回数量
-            keyword_filter: 可选，文档内容必须包含的关键词
-
-        Returns:
-            检索结果列表，每项包含 {document, metadata, distance}
-        """
-        # 生成查询向量
-        try:
-            query_embedding = await self._get_single_embedding(query)
-        except Exception as e:
-            print(f"[脚本检索] Embedding 调用失败: {e}")
-            return []
-
-        # 构建过滤条件
-        where = None
-        if language:
-            where = {"language": language.lower()}
-
-        where_document = None
-        if keyword_filter:
-            where_document = {"$contains": keyword_filter}
-
-        # 检查集合是否有数据
-        if self._scripts.count() == 0:
-            return []
-
-        # ChromaDB 向量检索
-        results = self._scripts.query(
-            query_embeddings=[query_embedding],
-            n_results=min(top_k, self._scripts.count()),
-            where=where,
-            where_document=where_document,
-            include=["documents", "metadatas", "distances"],
-        )
-
-        # 格式化返回
-        items = []
-        if results and results["ids"] and results["ids"][0]:
-            for i, doc_id in enumerate(results["ids"][0]):
-                items.append({
-                    "id": doc_id,
-                    "document": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i],
-                    "distance": results["distances"][0][i],
-                })
-
-        return items
-
     # ==================== 工具方法 ====================
 
     def get_stats(self) -> dict:
         """获取向量库统计信息"""
         return {
             "conversations_count": self._conversations.count(),
-            "scripts_count": self._scripts.count(),
             "chroma_db_dir": str(config.CHROMA_DB_DIR),
         }
 

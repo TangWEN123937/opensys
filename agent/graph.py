@@ -30,6 +30,8 @@ from .security import assess_risk, format_approval_request
 from .context_compression import compress_context, summarize_old_messages
 from .vector_store import VectorStoreManager, slice_conversation_turns
 from .model_manager import get_llm, get_base_llm, clean_messages, apply_claude_message_cache
+from .skill_loader import load_skills_for_prompt
+from .task_classifier import format_recommendation_for_prompt
 from .utils import sanitize_text
 from . import config
 
@@ -44,7 +46,6 @@ SYSTEM_PROMPT = """你是 OpenSys AI Agent，一个运行在隔离 Docker 容器
 - `write_and_run_script`: 编写并执行脚本（Python、Bash、Node.js）
 - `ask_user`: 当你需要用户提供信息或帮助时，暂停并提问
 - `write_todos`: 创建和管理任务清单（复杂任务时使用）
-- `search_scripts`: 搜索脚本知识库，查找已有的相似脚本（编写脚本前先搜索，避免重复编写）
 
 ## 工作原则
 1. **先了解再操作**：执行前先查看环境信息（ls、cat、pwd 等）
@@ -113,11 +114,34 @@ def _load_user_prompt() -> str:
 
 
 def _build_system_prompt(state: AgentState) -> str:
-    """构建系统提示词，动态注入记忆文档和当前 todos 状态（纯同步，保证 prompt 稳定以利用厂商 token 缓存）"""
+    """
+    构建系统提示词，动态注入记忆文档、技能内容和当前 todos 状态
+
+    注入顺序（从上到下）：
+    1. SYSTEM_PROMPT 基础角色定义
+    2. user_prompt.md 用户自定义规则
+    3. 技能系统内容（根据用户输入关键词匹配）
+    4. memory.md 记忆文档
+    5. 当前 todos 状态 + 任务完成报告触发提示
+
+    纯同步，保证 prompt 稳定以利用厂商 token 缓存。
+    """
     prompt = SYSTEM_PROMPT
 
     # 注入用户自定义提示词（任务分解、调试铁律、验证规范等）
     prompt += _load_user_prompt()
+
+    # 注入技能系统内容（根据用户最新输入的关键词动态匹配）
+    user_query = _extract_latest_user_query(state.get("messages", []))
+    skills_text = load_skills_for_prompt(user_query)
+    if skills_text:
+        prompt += skills_text
+
+    # 注入模型推荐提示（根据任务复杂度，仅建议不强制切换）
+    current_model = _get_model_name_from_state(state)
+    recommendation_text = format_recommendation_for_prompt(user_query, current_model)
+    if recommendation_text:
+        prompt += recommendation_text
 
     # 注入 memory.md 记忆文档
     prompt += _load_memory()
@@ -138,8 +162,20 @@ def _build_system_prompt(state: AgentState) -> str:
         total = len(todos)
         completed = sum(1 for t in todos if t.get("status") == "completed")
         in_progress = sum(1 for t in todos if t.get("status") == "in_progress")
-        todo_lines.append(f"\n进度：{completed}/{total} 完成，{in_progress} 进行中")
-        todo_lines.append("请继续执行当前 in_progress 的任务，完成后用 write_todos 标记为 completed。")
+        pending = total - completed - in_progress
+        todo_lines.append(f"\n进度：{completed}/{total} 完成，{in_progress} 进行中，{pending} 待执行")
+
+        # 任务完成报告触发：当所有 todo 都已 completed 时
+        if completed == total and total > 0:
+            todo_lines.append(
+                "\n🎯 **所有任务已完成！** 请立即输出任务完成报告（格式参考'任务完成报告规范'章节），"
+                "包含：状态、概述、变更清单、验证结果、遗留问题。"
+                "报告输出后，使用 ask_user 请求用户验收。"
+            )
+        elif in_progress > 0:
+            todo_lines.append("请继续执行当前 in_progress 的任务，完成后用 write_todos 标记为 completed。")
+        elif pending > 0 and in_progress == 0:
+            todo_lines.append("有待执行的任务但没有 in_progress 的任务，请选择下一个 pending 任务开始执行。")
 
         prompt += "\n".join(todo_lines)
 

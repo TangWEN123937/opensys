@@ -251,7 +251,6 @@ CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
 
 # ChromaDB 集合名称
 CHROMA_COLLECTION_CONVERSATIONS = "conversation_memory"  # 对话记忆集合
-CHROMA_COLLECTION_SCRIPTS = "script_knowledge"            # 脚本知识库集合
 
 # 本地 Embedding 服务配置（BGE-M3）
 EMBEDDING_API_URL = os.getenv("OPENSYS_EMBEDDING_URL", "http://localhost:8100/api/v1/embed")
@@ -263,10 +262,31 @@ VECTOR_TRIGGER_TOKENS = int(os.getenv("OPENSYS_VECTOR_TOKEN_TRIGGER", "15000")) 
 VECTOR_KEEP_MESSAGES = int(os.getenv("OPENSYS_VECTOR_KEEP_MSG", "30"))          # 入库后保留的最近消息数
 VECTOR_SEARCH_TOP_K = int(os.getenv("OPENSYS_VECTOR_TOP_K", "5"))              # 检索返回的 top-k 数量
 
-# 脚本知识库配置
-SCRIPT_SIMILARITY_THRESHOLD = float(os.getenv("OPENSYS_SCRIPT_SIM_THRESHOLD", "0.85"))  # 脚本去重相似度阈值
-SCRIPTS_DIR = DATA_DIR / "scripts"  # 持久化脚本存储目录（每个脚本配一个 .txt 说明文件）
-SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+# ==================== 技能系统配置 ====================
+
+# 技能文件目录（每个子目录为一个技能，包含 SKILL.md 主文件）
+SKILLS_DIR = DATA_DIR / "skills"
+SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+
+# 技能加载策略：始终加载的核心技能列表（目录名），空列表表示全部按需加载
+SKILLS_ALWAYS_LOAD = os.getenv("OPENSYS_SKILLS_ALWAYS_LOAD", "").split(",")
+SKILLS_ALWAYS_LOAD = [s.strip() for s in SKILLS_ALWAYS_LOAD if s.strip()]
+
+# 技能内容注入 system prompt 的最大总字符数（防止 prompt 过长）
+SKILLS_MAX_CHARS = int(os.getenv("OPENSYS_SKILLS_MAX_CHARS", "8000"))
+
+# ==================== 模型自动分级推荐配置 ====================
+
+# 按任务复杂度推荐的模型（仅推荐，不强制切换，用户可忽略）
+# simple: 快速便宜模型，用于信息查询、只读操作
+# standard: 当前默认模型，用于常规开发
+# complex: 最强模型，用于架构设计、重构、多模块集成（可通过环境变量随时更换）
+COMPLEX_MODEL_NAME = os.getenv("OPENSYS_COMPLEX_MODEL", "claude-sonnet-4-6")
+MODEL_RECOMMENDATIONS = {
+    "simple": "deepseek-chat",
+    "standard": DEFAULT_MODEL_NAME,
+    "complex": COMPLEX_MODEL_NAME,
+}
 
 # ==================== 调试配置 ====================
 
