@@ -1,12 +1,14 @@
 # ==================== OpenSys 一键部署 ====================
-# 包含：AI Agent 容器 + Squid 代理网关
+# 包含：AI Agent 容器 + Squid 代理网关 + 可视化前端
 #
 # 使用方法：
 #   cd docker/
 #   docker compose up -d
 #
 # 访问：
-#   API 文档: http://localhost:8001/docs
+#   可视化前端: http://localhost:3000
+#   API 文档: http://localhost:8010/docs
+#   noVNC 桌面: http://localhost:6080/vnc.html
 #   CLI 交互: docker compose exec agent python -m agent cli
 
 services:
@@ -18,12 +20,19 @@ services:
     container_name: opensys-agent
     restart: unless-stopped
 
+    # Chromium 浏览器需要足够的共享内存（默认 64MB 会导致崩溃）
+    shm_size: '2gb'
+
     # 端口映射
     ports:
       - "${OPENSYS_API_PORT:-8010}:8000"
+      # noVNC Web 客户端（浏览器远程桌面，人工操作验证码等）
+      - "${OPENSYS_NOVNC_PORT:-6080}:6080"
 
     # 数据卷
     volumes:
+      # Agent 源码热挂载（开发阶段：宿主机改代码 → 容器内立即生效，重启即可）
+      - ./../agent:/app/agent
       # 持久化数据（SQLite、审批记忆、审计日志、记忆文档）
       # 绑定挂载到宿主机 data/ 目录，方便直接查看和编辑 memory.md
       - ./../data:/app/data
@@ -52,6 +61,9 @@ services:
       - no_proxy=localhost,127.0.0.1,host.docker.internal,ollama
       # Ollama 在容器内通过 host.docker.internal 访问宿主机
       - OPENSYS_OLLAMA_API_BASE=http://host.docker.internal:11434
+      # browser-use bubus 事件总线超时（容器中 Chromium 首次启动较慢，默认 30s 不够）
+      - TIMEOUT_BrowserStartEvent=120
+      - TIMEOUT_BrowserLaunchEvent=120
 
     # 安全配置
     # cap_drop:
@@ -100,6 +112,23 @@ services:
     # 不暴露端口到宿主机（只在内部网络可用）
     # ports:
     #   - "3128:3128"
+
+    networks:
+      - opensys-net
+
+  # --- 可视化调试前端 ---
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: opensys-frontend
+    restart: unless-stopped
+
+    ports:
+      - "${OPENSYS_FRONTEND_PORT:-3000}:80"
+
+    depends_on:
+      - agent
 
     networks:
       - opensys-net

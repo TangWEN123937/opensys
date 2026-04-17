@@ -28,6 +28,7 @@
 
 # 第三方 API 代理
 .dmxapi.cn
+.caolele.top
 
 # --- 包管理器（允许 AI 安装工具） ---
 # Python
@@ -49,4 +50,6 @@
 .githubassets.com
 
 # --- 搜索与文档 ---
-# 暂不开放，需要时由用户审批添加
+# Tavily 搜索 API（Web 工具轻量搜索 + 网页提取）
+.tavily.com
+.api.tavily.com
