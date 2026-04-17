@@ -1,18 +1,14 @@
 """
-OpenSys 任务复杂度分级器
+OpenSys 任务分类器
 
-根据用户输入的文本自动判断任务复杂度（simple/standard/complex），
-用于在 system prompt 中注入模型推荐建议（仅推荐，不自动切换）。
+功能：
+1. 任务复杂度分级（simple/standard/complex）— 纯关键词规则，零 LLM 调用
+2. 多阶段任务检测（needs_planning）— Advisor 触发兜底，防止 LLM 跳过规划
 
 分级逻辑：
 1. 优先检测 complex 特征（架构、重构、多模块等高复杂度关键词）
 2. 再检测 simple 特征（查看、版本、帮助等只读/信息查询关键词）
 3. 兜底为 standard（修复、创建、编写等常规开发任务）
-
-设计要点：
-- 纯关键词 + 句法规则，零 LLM 调用，零延迟
-- 返回复杂度等级 + 匹配到的特征关键词（用于日志和 prompt 展示）
-- 可通过 config.MODEL_RECOMMENDATIONS 映射到推荐模型
 """
 
 import re
@@ -128,89 +124,66 @@ def classify_task_complexity(
     return "standard", standard_matched
 
 
-# ==================== 模型推荐函数 ====================
+# ==================== 多阶段任务检测（Advisor 触发兜底） ====================
 
-def get_model_recommendation(
-    complexity: Literal["simple", "standard", "complex"],
-    current_model: str = None,
-) -> dict | None:
+# 需要规划的多阶段任务特征（同时出现两类关键词才触发）
+# 类型 A：信息采集动作
+_PLANNING_COLLECT_KEYWORDS = [
+    "搜索", "查询", "获取", "采集", "爬取", "抓取", "提取", "收集",
+    "调研", "研究", "对比", "搜", "查",
+    "search", "crawl", "scrape", "extract", "collect", "research",
+]
+
+# 类型 B：产出/分析动作
+_PLANNING_OUTPUT_KEYWORDS = [
+    "报告", "总结", "分析", "统计", "汇总", "整理", "对比分析",
+    "写一篇", "形成", "输出", "撰写", "生成报告",
+    "推荐", "方案", "建议", "评估",
+    "report", "summary", "analyze", "statistics", "recommend",
+]
+
+# 类型 C：需要浏览器操作的关键词（单独命中即需规划，因为浏览器操作必须通过 pipeline 编排）
+_PLANNING_BROWSER_KEYWORDS = [
+    "登录", "注册", "填写", "点击", "浏览器", "操作页面",
+    "抖音", "算数指数", "创作者平台", "后台",
+    "login", "sign in", "sign up", "browser",
+]
+
+
+def needs_planning(user_message: str) -> tuple[bool, str]:
     """
-    根据复杂度等级获取模型推荐信息
+    检测用户消息是否涉及多阶段任务（需要 Advisor 规划）
 
-    如果当前模型已经匹配推荐等级，返回 None（不需要推荐）。
+    判定规则：
+    1. 包含浏览器操作关键词 → 直接触发（浏览器操作必须通过 pipeline 编排）
+    2. 同时包含"信息采集"和"产出/分析"两类关键词 → 触发
 
     Args:
-        complexity: 任务复杂度等级
-        current_model: 当前正在使用的模型名称
+        user_message: 用户最新输入文本
 
     Returns:
-        推荐信息 dict，或 None（不需要推荐）
-        {
-            "recommended_model": str,  # 推荐的模型名
-            "complexity": str,         # 复杂度等级
-            "reason": str,             # 推荐原因
-        }
-    """
-    recommendations = getattr(config, "MODEL_RECOMMENDATIONS", None)
-    if not recommendations:
-        return None
-
-    recommended = recommendations.get(complexity)
-    if not recommended:
-        return None
-
-    # 当前模型已经是推荐模型，不需要再推荐
-    current = current_model or config.DEFAULT_MODEL_NAME
-    if current == recommended:
-        return None
-
-    # 生成推荐原因
-    reason_map = {
-        "simple": "当前任务较简单，推荐使用快速模型节省成本",
-        "standard": "当前任务为常规开发，推荐使用标准模型",
-        "complex": "当前任务复杂度较高，推荐使用最强模型获得更好效果",
-    }
-
-    return {
-        "recommended_model": recommended,
-        "complexity": complexity,
-        "reason": reason_map.get(complexity, ""),
-    }
-
-
-# ==================== 格式化 prompt 注入 ====================
-
-def format_recommendation_for_prompt(
-    user_message: str,
-    current_model: str = None,
-) -> str:
-    """
-    一站式接口：分级 → 推荐 → 格式化为 prompt 注入文本
-
-    在 graph.py 的 _build_system_prompt() 中调用。
-
-    Args:
-        user_message: 用户最新输入
-        current_model: 当前使用的模型名
-
-    Returns:
-        格式化后的推荐文本（直接拼接到 system prompt），
-        无推荐时返回空字符串
+        (should_plan, reason):
+        - should_plan: True 表示需要规划
+        - reason: 触发原因描述（用于日志）
     """
     if not user_message:
-        return ""
+        return False, ""
 
-    complexity, keywords = classify_task_complexity(user_message)
-    recommendation = get_model_recommendation(complexity, current_model)
+    text = user_message.lower()
 
-    if not recommendation:
-        return ""
+    # 规则 1：浏览器操作关键词 → 直接触发（浏览器已独立为子代理节点）
+    browser_hits = [kw for kw in _PLANNING_BROWSER_KEYWORDS if kw.lower() in text]
+    if browser_hits:
+        reason = f"浏览器操作({','.join(browser_hits[:2])})"
+        return True, reason
 
-    model = recommendation["recommended_model"]
-    reason = recommendation["reason"]
+    # 规则 2：采集 + 产出 同时命中 → 触发
+    collect_hits = [kw for kw in _PLANNING_COLLECT_KEYWORDS if kw.lower() in text]
+    output_hits = [kw for kw in _PLANNING_OUTPUT_KEYWORDS if kw.lower() in text]
 
-    return (
-        f"\n\n> 💡 **[系统建议]** {reason}，"
-        f"建议使用 `/model {model}`。"
-        f"（当前复杂度: {complexity}，当前模型: {current_model or config.DEFAULT_MODEL_NAME}）"
-    )
+    if collect_hits and output_hits:
+        reason = f"采集({','.join(collect_hits[:2])}) + 产出({','.join(output_hits[:2])})"
+        return True, reason
+
+    return False, ""
+

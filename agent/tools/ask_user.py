@@ -9,14 +9,22 @@ ask_user Tool — 请求用户介入
 
 此工具利用 LangGraph 的 interrupt() 机制暂停图执行，
 等待用户通过 WebSocket/CLI 回复后继续。
+无人值守模式下自动返回"已确认"，跳过人工等待。
 """
 
+from typing import Annotated
+
 from langgraph.types import interrupt
+from langgraph.prebuilt import InjectedState
 from langchain_core.tools import tool
 
 
 @tool
-def ask_user(question: str, context: str = "") -> str:
+def ask_user(
+    question: str,
+    context: str = "",
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
     """暂停执行，向用户提问并等待回复。
 
     当你需要用户提供信息、做出选择、或需要人工帮助时调用此工具。
@@ -33,6 +41,11 @@ def ask_user(question: str, context: str = "") -> str:
     prompt = question
     if context:
         prompt = f"{question}\n\n📋 背景信息: {context}"
+
+    # 无人值守模式：自动回复，跳过 interrupt
+    if state and state.get("unattended"):
+        print(f"[ask_user] 无人值守模式，自动确认: {question[:80]}")
+        return "已确认，请继续执行"
 
     # 使用 LangGraph interrupt() 暂停图执行
     # 用户通过 WebSocket/CLI 回复后，回复内容作为返回值继续执行

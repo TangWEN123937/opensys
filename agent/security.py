@@ -56,6 +56,13 @@ INTERNAL_NETWORK_PATTERNS = [
 ]
 
 
+def _web_needs_browser(task: str) -> bool:
+    """判断 web_tool 的 task 是否需要浏览器交互（复用 config 关键词列表）"""
+    from .config import WEB_TOOL_BROWSE_KEYWORDS
+    task_lower = task.lower()
+    return any(kw in task_lower for kw in WEB_TOOL_BROWSE_KEYWORDS)
+
+
 def assess_risk(
     tool_calls: list[dict],
     auth_level: int = AuthLevel.RESTRICTED,
@@ -82,8 +89,21 @@ def assess_risk(
         tool_name = tc.get("name", "")
         args = tc.get("args", {})
 
-        # ask_user / write_todos / update_memory 工具始终安全（不执行任何系统命令）
-        if tool_name in ("ask_user", "write_todos", "update_memory"):
+        # ask_user / write_todos / update_memory / request_planning 工具始终安全（不执行任何系统命令）
+        if tool_name in ("ask_user", "write_todos", "update_memory", "request_planning"):
+            continue
+
+        # web_tool：search/extract 模式安全，browse 模式需审批
+        if tool_name == "web_tool":
+            web_mode = args.get("mode", "auto")
+            task_text = args.get("task", "")
+            # browse 模式或含浏览器关键词 → moderate（需用户确认）
+            if web_mode == "browse" or (web_mode == "auto" and _web_needs_browser(task_text)):
+                risk = "moderate"
+                if risk == "dangerous":
+                    return "dangerous"
+                highest_risk = "moderate"
+            # search / extract / auto（无浏览器关键词）→ safe
             continue
 
         # 分路径评估：run_terminal 走第 1 层（命令级），write_and_run_script 走第 2 层（脚本级）

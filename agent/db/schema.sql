@@ -98,3 +98,31 @@ CREATE TABLE IF NOT EXISTS network_whitelist (
 );
 
 CREATE INDEX IF NOT EXISTS idx_whitelist_domain ON network_whitelist(domain);
+
+
+-- ==================== 定时任务表 ====================
+-- 管理 cron 定时触发的 Agent 任务
+
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 任务名称（用户自定义）
+    name TEXT NOT NULL,
+    -- 发送给 Agent 的消息内容
+    query TEXT NOT NULL,
+    -- cron 表达式（如 "0 9 * * *" 表示每天9点）
+    cron_expr TEXT NOT NULL,
+    -- 任务状态：active / paused / done（一次性任务执行后标记 done）
+    status TEXT DEFAULT 'active',
+    -- 是否为一次性任务（执行一次后自动标记 done）
+    once BOOLEAN DEFAULT 0,
+    -- 上次执行时间
+    last_run_at TIMESTAMP,
+    -- 上次执行结果：success / failed
+    last_run_result TEXT,
+    -- 关联的对话线程 ID（每次执行创建新线程或复用）
+    thread_id TEXT,
+    -- 创建时间
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_tasks(status);

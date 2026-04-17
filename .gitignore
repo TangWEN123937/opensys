@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 环境变量
+.env
+.env.*
+
+# ==================== OpenSys 运行时数据 ====================
+# data/ 目录中只有部分文件需要版本控制（如 workflows、skills）
+# 运行时生成的数据不应纳入 git
+
+# 浏览器用户数据（Chrome 缓存、Cookie、登录态等，容器内 root 生成）
+data/browser_data/
+
+# 数据库
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# 浏览器下载文件
+data/downloads/
+
+# 向量数据库
+data/chroma_db/
+
+# 日志（定时任务日志、审计日志等）
+data/logs/
+
+# 记忆文档（每个用户不同，运行时生成）
+data/memory.md
+
+# 用户自定义提示词（运行时生成）
+data/user_prompt.md
+
+# 项目声明（运行时生成）
+data/project.md
+
+# 权限配置（运行时生成）
+data/permissions.yaml
+
+# 输出目录（Agent 产出物）
+output/

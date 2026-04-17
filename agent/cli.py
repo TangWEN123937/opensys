@@ -81,7 +81,10 @@ async def main(thread_id: Optional[str] = None, new_thread: bool = False):
     # 记录对话
     await db.create_conversation(thread_id)
 
-    graph_config = {"configurable": {"thread_id": thread_id}}
+    graph_config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": config.RECURSION_LIMIT,  # P3 pipeline 需要足够的递归深度（默认 50）
+    }
 
     console.print("[dim]输入消息与 AI 对话。输入 'exit' 或 'quit' 退出。[/dim]")
     console.print("[dim]输入 '/help' 查看可用命令。[/dim]\n")
@@ -105,20 +108,45 @@ async def main(thread_id: Optional[str] = None, new_thread: bool = False):
             # --- 处理 CLI 命令（以 / 开头） ---
             if user_input.strip().startswith("/"):
                 cmd_result = await _handle_cli_command(
-                    user_input.strip(), current_model_config, db, thread_id
+                    user_input.strip(), current_model_config, db, thread_id, saver
                 )
                 if cmd_result is None:
                     pass  # 无需修改任何状态
                 elif cmd_result.get("_action") == "switch_thread":
                     # 切换对话线程
                     thread_id = cmd_result["thread_id"]
-                    graph_config = {"configurable": {"thread_id": thread_id}}
+                    graph_config["configurable"]["thread_id"] = thread_id
                     await db.create_conversation(thread_id)
                 elif cmd_result.get("_action") == "new_thread":
                     # 新建对话线程
                     thread_id = cmd_result["thread_id"]
-                    graph_config = {"configurable": {"thread_id": thread_id}}
+                    graph_config["configurable"]["thread_id"] = thread_id
                     await db.create_conversation(thread_id)
+                elif cmd_result.get("_action") == "delete_thread":
+                    # 删除对话后自动切换：如果删的是当前对话，新建一个
+                    deleted_id = cmd_result["thread_id"]
+                    if deleted_id == thread_id:
+                        thread_id = str(uuid.uuid4())
+                        graph_config["configurable"]["thread_id"] = thread_id
+                        await db.create_conversation(thread_id)
+                        console.print(f"[bold green]🆕 已自动新建对话[/bold green] | 线程 ID: {thread_id[:8]}...")
+                elif cmd_result.get("_action") == "plan":
+                    # /plan 命令：直接进入 Advisor 规划模式（跳过 LLM 调用）
+                    plan_task = cmd_result["task"]
+                    graph_input = {
+                        "messages": [HumanMessage(content=f"/plan {plan_task}")],
+                        "auth_level": config.DEFAULT_AUTH_LEVEL,
+                        "advisor_context": {
+                            "user_request": plan_task,
+                            "background": "用户通过 /plan 命令主动触发 Advisor 规划",
+                            "constraints": [],
+                            "existing_progress": "",
+                            "replan_reason": "",
+                        },
+                    }
+                    if current_model_config:
+                        graph_input["model_config"] = current_model_config
+                    await _run_graph_with_approval(graph, graph_input, graph_config, db, thread_id)
                 else:
                     # 模型切换：返回新的 model_config
                     current_model_config = cmd_result
@@ -311,6 +339,74 @@ async def _handle_interrupt(state, console, db, thread_id) -> object:
         user_reply = Prompt.ask("[bold]请回复[/bold]")
         return user_reply
 
+    elif approval_type == "pipeline_confirmation":
+        # Advisor 生成的 pipeline 需要用户确认
+        display = interrupt_data.get("display", "")
+        options = interrupt_data.get("options", ["确认执行", "拒绝"])
+
+        # 展示 pipeline 规划内容
+        if display:
+            console.print(Panel(
+                display,
+                title="[bold magenta]📋 Advisor 执行计划[/bold magenta]",
+                border_style="magenta",
+            ))
+        else:
+            console.print("[dim]（无详细计划展示）[/dim]")
+
+        # 获取用户确认（支持三种操作：确认 / 拒绝 / 修改意见）
+        console.print(f"[dim]选项: {' / '.join(options)}[/dim]")
+        choice = Prompt.ask(
+            "[bold]确认执行此计划?[/bold] (y=确认 / n=拒绝 / 直接输入修改意见)",
+            default="y",
+        )
+
+        _choice = choice.strip()
+        _choice_lower = _choice.lower()
+        if _choice_lower in ("y", "yes", "确认", "确认执行", "是", "ok"):
+            return {"action": "approved"}
+        elif _choice_lower in ("n", "no", "拒绝", "否"):
+            return {"action": "rejected"}
+        else:
+            # 用户输入了修改意见
+            console.print(f"[dim]📝 将您的意见发送给 Advisor 重新规划...[/dim]")
+            return {"action": "revise", "feedback": _choice}
+
+    elif approval_type == "escalation":
+        # 阶段执行异常，需要用户介入决策
+        display = interrupt_data.get("display", "阶段执行遇到问题，需要你的决定。")
+        options = interrupt_data.get("options", ["直接通过", "给出修改意见", "跳过此阶段", "终止任务"])
+        reason = interrupt_data.get("reason", "unknown")
+
+        console.print(Panel(
+            display,
+            title="[bold yellow]⚠️ 需要人工介入[/bold yellow]",
+            border_style="yellow",
+        ))
+
+        # 展示选项
+        for i, opt in enumerate(options, 1):
+            console.print(f"  [bold]{i})[/bold] {opt}")
+
+        choice = Prompt.ask(
+            "\n[bold]请选择操作（输入编号或直接输入修改意见）[/bold]",
+            default="1",
+        )
+
+        choice = choice.strip()
+        # 如果输入的是编号，映射到 action
+        action_map = {"1": "pass", "2": "feedback", "3": "skip", "4": "abort"}
+        if choice in action_map:
+            action = action_map[choice]
+            if action == "feedback":
+                # 用户选择给出修改意见，收集详细反馈
+                user_fb = Prompt.ask("[bold]请输入你的修改意见[/bold]")
+                return {"action": "feedback", "feedback": user_fb}
+            return {"action": action}
+        else:
+            # 用户直接输入了文字 → 当作修改意见
+            return {"action": "feedback", "feedback": choice}
+
     # 无法识别的 interrupt 类型
     console.print(f"\n[bold red]❌ 未知的 interrupt 类型: {approval_type}[/bold red]")
     return None
@@ -337,7 +433,8 @@ async def list_conversations():
 
 
 async def _handle_cli_command(
-    cmd: str, current_model_config: dict, db: DatabaseManager, current_thread_id: str
+    cmd: str, current_model_config: dict, db: DatabaseManager, current_thread_id: str,
+    saver=None,
 ) -> object:
     """
     处理 CLI 斜杠命令
@@ -345,6 +442,7 @@ async def _handle_cli_command(
     返回值：
         - {"_action": "new_thread", "thread_id": ...}: 新建对话
         - {"_action": "switch_thread", "thread_id": ...}: 切换对话
+        - {"_action": "delete_thread", "thread_id": ...}: 删除对话
         - dict (无 _action): 新的 model_config（/model 切换时）
         - None: 不修改任何状态
     """
@@ -358,12 +456,17 @@ async def _handle_cli_command(
             "[bold]/new[/bold] — 新建对话\n"
             "[bold]/threads[/bold] — 列出所有对话线程\n"
             "[bold]/switch[/bold] <线程ID前缀> — 切换到指定对话\n"
-            "  例: /switch a3f2\n\n"
+            "  例: /switch a3f2\n"
+            "[bold]/del[/bold] <ID前缀> [更多ID...] — 删除对话（支持批量）\n"
+            "  例: /del a3f2  或  /del a3f2 b7c1 0e9d\n\n"
             "[bold cyan]— 模型管理 —[/bold cyan]\n"
             "[bold]/model[/bold] <模型名> — 切换模型\n"
             "  例: /model deepseek-chat\n"
             "[bold]/models[/bold] — 查看所有可用模型\n"
             "[bold]/reset[/bold] — 重置为默认模型\n\n"
+            "[bold cyan]— 任务规划 —[/bold cyan]\n"
+            "[bold]/plan[/bold] <任务描述> — 直接进入 Advisor 规划模式\n"
+            "  例: /plan 去抖音创作者平台采集数据并生成分析报告\n\n"
             "[bold cyan]— 记忆与提示词 —[/bold cyan]\n"
             "[bold]/memory[/bold] — 查看当前记忆文档内容\n"
             "[bold]/prompt[/bold] — 查看用户自定义提示词\n\n"
@@ -428,6 +531,73 @@ async def _handle_cli_command(
             else:
                 console.print(f"[yellow]⚠️ 未找到匹配 '{prefix}' 的对话[/yellow]")
             return None
+
+    elif command in ("/del", "/delete"):
+        if not args_str:
+            console.print("[yellow]用法: /del <ID前缀> [更多ID...][/yellow]")
+            console.print("[dim]例: /del a3f2 b7c1  |  输入 /threads 查看所有对话[/dim]")
+            return None
+
+        # 支持空格分隔多个 ID 前缀
+        prefixes = args_str.split()
+
+        # 解析所有前缀对应的对话
+        matched = []   # [(tid, title), ...]
+        failed = []    # [(prefix, reason), ...]
+        for prefix in prefixes:
+            conv = await db.get_conversation_by_id(prefix)
+            if conv:
+                matched.append((conv["thread_id"], conv["title"]))
+            else:
+                # 检查是否多个匹配
+                cursor = await db.conn.execute(
+                    "SELECT thread_id, title FROM conversations WHERE thread_id LIKE ? AND status = 'active' LIMIT 5",
+                    (prefix + "%",),
+                )
+                rows = await cursor.fetchall()
+                if len(rows) > 1:
+                    failed.append((prefix, f"匹配到 {len(rows)} 个对话，请更精确"))
+                    for r in rows:
+                        console.print(f"  [cyan]{r[0][:8]}...[/cyan] | {r[1] or '未命名对话'}")
+                else:
+                    failed.append((prefix, "未找到"))
+
+        # 报告匹配失败的
+        for prefix, reason in failed:
+            console.print(f"[yellow]⚠️ '{prefix}': {reason}[/yellow]")
+
+        if not matched:
+            return None
+
+        # 二次确认（列出所有待删除）
+        console.print(f"[yellow]⚠️ 即将删除 {len(matched)} 个对话：[/yellow]")
+        for tid, title in matched:
+            console.print(f"  [cyan]{tid[:8]}...[/cyan] | {title}")
+        confirm = Prompt.ask("[yellow]确认删除? (y/n)[/yellow]", default="n")
+        if confirm.strip().lower() not in ("y", "yes", "是"):
+            console.print("[dim]已取消删除[/dim]")
+            return None
+
+        # 执行批量删除
+        deleted_current = False
+        for tid, title in matched:
+            ok = await db.delete_conversation(tid)
+            if saver:
+                try:
+                    await saver.adelete_thread(tid)
+                except Exception:
+                    pass
+            if ok:
+                console.print(f"[bold red]🗑️ 已删除[/bold red] | {title} | {tid[:8]}...")
+                if tid == current_thread_id:
+                    deleted_current = True
+            else:
+                console.print(f"[yellow]⚠️ {tid[:8]}... 删除失败[/yellow]")
+
+        # 如果删除了当前对话，通知主循环新建
+        if deleted_current:
+            return {"_action": "delete_thread", "thread_id": current_thread_id}
+        return None
 
     # ==================== 记忆管理命令 ====================
 
@@ -526,6 +696,21 @@ async def _handle_cli_command(
         console.print(f"[bold green]✅ 已重置为默认模型: {config.DEFAULT_MODEL_NAME}[/bold green]")
         clear_cache()
         return {}  # 返回空 dict 清除 model_config
+
+    # ==================== 任务规划命令 ====================
+
+    elif command == "/plan":
+        if not args_str:
+            console.print("[yellow]用法: /plan <任务描述>[/yellow]")
+            console.print("[dim]例: /plan 去抖音创作者平台采集数据并生成分析报告[/dim]")
+            return None
+
+        console.print(f"[bold magenta]📋 直接进入 Advisor 规划模式[/bold magenta]")
+        console.print(f"[dim]任务: {args_str}[/dim]\n")
+        return {
+            "_action": "plan",
+            "task": args_str,
+        }
 
     else:
         console.print(f"[yellow]未知命令: {command}，输入 /help 查看可用命令[/yellow]")

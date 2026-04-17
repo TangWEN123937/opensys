@@ -203,6 +203,31 @@ class DatabaseManager:
         )
         await self.conn.commit()
 
+    async def delete_conversation(self, thread_id: str) -> bool:
+        """
+        删除（归档）指定对话
+
+        软删除：将 status 标记为 'archived'，不物理删除数据。
+        LangGraph checkpoint 数据需由调用方通过 saver.adelete_thread() 清理。
+
+        Returns:
+            True 表示成功删除，False 表示未找到该对话
+        """
+        cursor = await self.conn.execute(
+            "SELECT thread_id FROM conversations WHERE thread_id = ? AND status = 'active'",
+            (thread_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return False
+
+        await self.conn.execute(
+            "UPDATE conversations SET status = 'archived', updated_at = ? WHERE thread_id = ?",
+            (datetime.now().isoformat(), thread_id),
+        )
+        await self.conn.commit()
+        return True
+
     # ==================== 审计日志 ====================
 
     async def log_audit(
@@ -262,3 +287,97 @@ class DatabaseManager:
             }
             for r in rows
         ]
+
+    # ==================== 定时任务管理 ====================
+
+    async def create_scheduled_task(
+        self,
+        name: str,
+        query: str,
+        cron_expr: str,
+        once: bool = False,
+    ) -> int:
+        """创建定时任务，返回任务 ID"""
+        cursor = await self.conn.execute(
+            """INSERT INTO scheduled_tasks (name, query, cron_expr, once)
+               VALUES (?, ?, ?, ?)""",
+            (name, query, cron_expr, 1 if once else 0),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def list_scheduled_tasks(self, status: str = "") -> list[dict]:
+        """查询定时任务列表"""
+        if status:
+            cursor = await self.conn.execute(
+                """SELECT id, name, query, cron_expr, status, once,
+                          last_run_at, last_run_result, thread_id, created_at
+                   FROM scheduled_tasks WHERE status = ?
+                   ORDER BY created_at DESC""",
+                (status,),
+            )
+        else:
+            cursor = await self.conn.execute(
+                """SELECT id, name, query, cron_expr, status, once,
+                          last_run_at, last_run_result, thread_id, created_at
+                   FROM scheduled_tasks
+                   ORDER BY created_at DESC""",
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0], "name": r[1], "query": r[2], "cron_expr": r[3],
+                "status": r[4], "once": bool(r[5]), "last_run_at": r[6],
+                "last_run_result": r[7], "thread_id": r[8], "created_at": r[9],
+            }
+            for r in rows
+        ]
+
+    async def get_scheduled_task(self, task_id: int) -> Optional[dict]:
+        """获取单个定时任务"""
+        cursor = await self.conn.execute(
+            """SELECT id, name, query, cron_expr, status, once,
+                      last_run_at, last_run_result, thread_id, created_at
+               FROM scheduled_tasks WHERE id = ?""",
+            (task_id,),
+        )
+        r = await cursor.fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "name": r[1], "query": r[2], "cron_expr": r[3],
+            "status": r[4], "once": bool(r[5]), "last_run_at": r[6],
+            "last_run_result": r[7], "thread_id": r[8], "created_at": r[9],
+        }
+
+    async def update_scheduled_task_status(self, task_id: int, status: str) -> bool:
+        """更新定时任务状态"""
+        cursor = await self.conn.execute(
+            "UPDATE scheduled_tasks SET status = ? WHERE id = ?",
+            (status, task_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def update_scheduled_task_run(
+        self, task_id: int, result: str, thread_id: str = ""
+    ) -> None:
+        """记录定时任务执行结果"""
+        await self.conn.execute(
+            """UPDATE scheduled_tasks
+               SET last_run_at = CURRENT_TIMESTAMP,
+                   last_run_result = ?,
+                   thread_id = ?
+               WHERE id = ?""",
+            (result, thread_id, task_id),
+        )
+        await self.conn.commit()
+
+    async def delete_scheduled_task(self, task_id: int) -> bool:
+        """删除定时任务"""
+        cursor = await self.conn.execute(
+            "DELETE FROM scheduled_tasks WHERE id = ?",
+            (task_id,),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0

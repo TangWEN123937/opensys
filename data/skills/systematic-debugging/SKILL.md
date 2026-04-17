@@ -3,6 +3,9 @@ name: 系统化调试
 triggers: [调试, debug, 错误, error, bug, 报错, 修复, fix, traceback, 堆栈, 异常, exception, 崩溃, crash, 失败, failed]
 priority: 10
 description: 四阶段调试流程 + 根因追溯 + 纵深防御
+summary: 强制四阶段执行，禁止跳步：①信息收集（完整错误输出+环境检查）→②根因分析（沿堆栈链逐层追溯，区分直接原因和根本原因）→③修复实施（最小改动原则，只改根因不改症状）→④验证防御（运行验证+回归测试+防御性措施）。适用于所有 bug 修复、报错处理、崩溃调试场景。
+version: "1.0"
+target_role: executor
 ---
 
 ## 系统化调试流程（本技能被激活时强制执行）

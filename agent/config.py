@@ -65,14 +65,24 @@ MODEL_PRESETS = {
     },
 
     # --- 通义千问 (Qwen) ---
+    "qwen3.6-plus": {
+        "model_name": "qwen3.6-plus",
+        "model_provider": "qwen",
+        "api_key": os.getenv("OPENSYS_QWEN_API_KEY", ""),
+        "api_base": os.getenv("OPENSYS_QWEN_API_BASE", "https://coding.caolele.top/v1"),
+        "thinking_model": False,
+        "isvision": True,
+    },
+
     "qwen3.5-plus": {
         "model_name": "qwen3.5-plus",
         "model_provider": "qwen",
         "api_key": os.getenv("OPENSYS_QWEN_API_KEY", ""),
-        "api_base": os.getenv("OPENSYS_QWEN_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        "api_base": os.getenv("OPENSYS_QWEN_API_BASE", "https://coding.caolele.top/v1"),
         "thinking_model": False,
         "isvision": True,
     },
+
     "qwen3.5-plus-Think": {
         "model_name": "qwen3.5-plus",
         "model_provider": "qwen",
@@ -147,8 +157,8 @@ MODEL_PRESETS = {
     },
 
     # --- 智谱 (GLM) ---
-    "glm-5": {
-        "model_name": "glm-5",
+    "glm-5.1": {
+        "model_name": "glm-5.1",
         "model_provider": "zhipu",
         "api_key": os.getenv("OPENSYS_ZHIPU_API_KEY", ""),
         "api_base": "https://open.bigmodel.cn/api/paas/v4/",
@@ -251,6 +261,10 @@ CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
 
 # ChromaDB 集合名称
 CHROMA_COLLECTION_CONVERSATIONS = "conversation_memory"  # 对话记忆集合
+CHROMA_COLLECTION_SKILLS = "skill_knowledge"              # 技能知识集合（P3 新增）
+
+# 技能向量检索 top-k（Advisor 无模板时使用）
+SKILL_VECTOR_TOP_K = int(os.getenv("OPENSYS_SKILL_VECTOR_TOP_K", "5"))
 
 # 本地 Embedding 服务配置（BGE-M3）
 EMBEDDING_API_URL = os.getenv("OPENSYS_EMBEDDING_URL", "http://localhost:8100/api/v1/embed")
@@ -261,6 +275,18 @@ VECTOR_TRIGGER_MESSAGES = int(os.getenv("OPENSYS_VECTOR_MSG_TRIGGER", "60"))    
 VECTOR_TRIGGER_TOKENS = int(os.getenv("OPENSYS_VECTOR_TOKEN_TRIGGER", "15000")) # 触发入库的 token 阈值
 VECTOR_KEEP_MESSAGES = int(os.getenv("OPENSYS_VECTOR_KEEP_MSG", "30"))          # 入库后保留的最近消息数
 VECTOR_SEARCH_TOP_K = int(os.getenv("OPENSYS_VECTOR_TOP_K", "5"))              # 检索返回的 top-k 数量
+
+# ==================== 权限与项目声明配置 ====================
+
+# 声明式权限配置文件（与 security.py 硬编码规则并行生效）
+PERMISSIONS_FILE = DATA_DIR / "permissions.yaml"
+
+# 项目声明文件（用户维护，注入 system prompt 提供项目背景）
+PROJECT_FILE = DATA_DIR / "project.md"
+
+# Workflow 模板目录（Advisor 从中选择匹配的工作流模板）
+WORKFLOWS_DIR = DATA_DIR / "workflows"
+WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ==================== 技能系统配置 ====================
 
@@ -275,18 +301,83 @@ SKILLS_ALWAYS_LOAD = [s.strip() for s in SKILLS_ALWAYS_LOAD if s.strip()]
 # 技能内容注入 system prompt 的最大总字符数（防止 prompt 过长）
 SKILLS_MAX_CHARS = int(os.getenv("OPENSYS_SKILLS_MAX_CHARS", "8000"))
 
-# ==================== 模型自动分级推荐配置 ====================
+# ==================== P3 多代理流水线配置 ====================
 
-# 按任务复杂度推荐的模型（仅推荐，不强制切换，用户可忽略）
-# simple: 快速便宜模型，用于信息查询、只读操作
-# standard: 当前默认模型，用于常规开发
-# complex: 最强模型，用于架构设计、重构、多模块集成（可通过环境变量随时更换）
+# Executor ↔ Reviewer 返工上限（同一阶段返工超过此次数 → escalate 到主代理）
+EXECUTOR_MAX_REWORK = int(os.getenv("OPENSYS_EXECUTOR_MAX_REWORK", "2"))
+
+# Advisor 单次会话最大调用次数（超过此次数 → 拒绝继续规划）
+ADVISOR_MAX_CALLS_PER_SESSION = int(os.getenv("OPENSYS_ADVISOR_MAX_CALLS", "5"))
+
+# Pipeline 模式下 agent 单阶段最大工具调用轮次（超过 → 强制结束当前阶段交给 phase_done）
+AGENT_PHASE_MAX_TOOL_ROUNDS = int(os.getenv("OPENSYS_AGENT_PHASE_MAX_TOOL_ROUNDS", "8"))
+
+# 同一阶段被路由的最大次数（超过 → 强制跳过或 escalate）
+MAX_PHASE_ATTEMPTS = int(os.getenv("OPENSYS_MAX_PHASE_ATTEMPTS", "5"))
+
+# LangGraph 全局递归上限（所有节点访问总次数）
+RECURSION_LIMIT = int(os.getenv("OPENSYS_RECURSION_LIMIT", "100"))
+
+# 无人值守模式全局超时（秒），定时任务超过此时间强制终止（默认 15 分钟）
+UNATTENDED_TIMEOUT_SECONDS = int(os.getenv("OPENSYS_UNATTENDED_TIMEOUT", "900"))
+
+# 无人值守模式最大自动处理 interrupt 次数（超过此次数强制终止 pipeline，防止死循环）
+UNATTENDED_MAX_AUTO_INTERRUPTS = int(os.getenv("OPENSYS_UNATTENDED_MAX_INTERRUPTS", "10"))
+
+# Executor 使用的小模型（Tier 2，执行类任务用便宜快速的模型）
+EXECUTOR_MODEL_NAME = os.getenv("OPENSYS_EXECUTOR_MODEL", "deepseek-chat")
+
+# Dispatcher 使用的模型（Tier 2，子任务拆分）
+DISPATCHER_MODEL_NAME = os.getenv("OPENSYS_DISPATCHER_MODEL", "deepseek-chat")
+
+# Reviewer 使用的模型（Tier 2，质量审查）
+REVIEWER_MODEL_NAME = os.getenv("OPENSYS_REVIEWER_MODEL", "deepseek-chat")
+
+# 最强模型名称（Tier 1，用于 Advisor 规划等高复杂度场景）
 COMPLEX_MODEL_NAME = os.getenv("OPENSYS_COMPLEX_MODEL", "claude-sonnet-4-6")
-MODEL_RECOMMENDATIONS = {
-    "simple": "deepseek-chat",
-    "standard": DEFAULT_MODEL_NAME,
-    "complex": COMPLEX_MODEL_NAME,
-}
+
+# Advisor 使用的模型（Tier 1，规划用最强模型；默认使用 COMPLEX_MODEL_NAME）
+ADVISOR_MODEL_NAME = os.getenv("OPENSYS_ADVISOR_MODEL", "")
+
+# ==================== Web 工具配置 ====================
+
+# Tavily 搜索 API Key（轻量搜索 + 网页提取）
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+# Tavily 搜索返回结果数
+WEB_SEARCH_MAX_RESULTS = int(os.getenv("OPENSYS_WEB_SEARCH_MAX_RESULTS", "5"))
+
+# 需要浏览器交互的关键词（代码层路由：命中任一关键词 → 走 Browser-Use）
+WEB_TOOL_BROWSE_KEYWORDS = [
+    # 中文关键词
+    "登录", "注册", "填写", "提交表单", "下单", "购买", "支付",
+    "点击", "操作网页", "下载文件", "上传文件", "扫码",
+    # 英文关键词
+    "login", "sign in", "register", "sign up", "submit",
+    "checkout", "purchase", "click", "fill form", "upload", "download file",
+]
+
+# 浏览器单次任务超时（秒）
+WEB_BROWSE_TIMEOUT = int(os.getenv("OPENSYS_WEB_BROWSE_TIMEOUT", "180"))
+
+# Browser-Use 浏览器 Agent 配置
+# 默认 non-headless（配合 noVNC 可实时查看/操作浏览器）
+BROWSER_HEADLESS = os.getenv("OPENSYS_BROWSER_HEADLESS", "false").lower() == "true"
+BROWSER_MAX_STEPS = int(os.getenv("OPENSYS_BROWSER_MAX_STEPS", "30"))
+# 步骤用尽但任务未完成时，自动续行的最大次数（在同一个 BrowserSession 上创建新 Agent 继续执行）
+BROWSER_MAX_CONTINUATIONS = int(os.getenv("OPENSYS_BROWSER_MAX_CONTINUATIONS", "1"))
+# 浏览器用户数据持久化目录（保留 Cookie/登录状态，避免每次重新登录）
+BROWSER_USER_DATA_DIR = str(DATA_DIR / "browser_data")
+# 浏览器下载文件保存目录（位于持久卷内，确保容器重启不丢失，其他节点可通过路径读取）
+BROWSER_DOWNLOADS_DIR = str(Path(os.getenv("OPENSYS_BROWSER_DOWNLOADS_DIR", str(DATA_DIR / "downloads"))))
+Path(BROWSER_DOWNLOADS_DIR).mkdir(parents=True, exist_ok=True)
+# 浏览器 Agent 使用的 LLM（需要支持视觉的模型效果最佳，默认复用主模型）
+BROWSER_MODEL_NAME = os.getenv("OPENSYS_BROWSER_MODEL", DEFAULT_MODEL_NAME)
+
+# noVNC 远程桌面配置
+NOVNC_PORT = int(os.getenv("OPENSYS_NOVNC_PORT", "6080"))
+# noVNC 访问地址（用于 ask_user 提示用户打开浏览器操作）
+NOVNC_URL = os.getenv("OPENSYS_NOVNC_URL", f"http://localhost:{NOVNC_PORT}/vnc.html")
 
 # ==================== 调试配置 ====================
 

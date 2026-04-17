@@ -36,6 +36,23 @@ _rate_limiter = InMemoryRateLimiter(
     max_bucket_size=config.RATE_LIMITER_BUCKET_SIZE,
 )
 
+# 全局 structured_output 黑名单（缓存不支持 with_structured_output 的模型名）
+# 原因：某些模型/API 网关在 thinking 模式下不支持 tool_choice 参数，
+# 调用 with_structured_output 会返回 400 错误。缓存后直接跳过，避免每次浪费请求。
+_structured_output_blacklist: set[str] = set()
+
+
+def is_structured_output_blocked(model_name: str) -> bool:
+    """检查模型是否在 structured_output 黑名单中"""
+    return bool(model_name) and model_name in _structured_output_blacklist
+
+
+def block_structured_output(model_name: str) -> None:
+    """将模型加入 structured_output 黑名单（检测到不兼容后调用）"""
+    if model_name:
+        _structured_output_blacklist.add(model_name)
+        print(f"[模型管理] {model_name} 已加入 structured_output 黑名单")
+
 
 # ==================== 核心函数 ====================
 
@@ -193,8 +210,18 @@ def _create_model_instance(mc: dict) -> object:
             )
 
         # --- Qwen / QwQ ---
+        # 注意：_BaseChatQwen 的 api_base 字段有 alias="base_url"，
+        # 且 validate_environment 用 self.api_base 构建 openai client。
+        # 必须同时设置环境变量 DASHSCOPE_API_KEY，并用 api_base 参数名传入地址，
+        # 否则 openai client 会 fallback 到默认国际版地址导致 401。
         elif provider == "qwen":
+            import os as _os
             from langchain_qwq import ChatQwen
+            # 确保 DASHSCOPE_API_KEY 环境变量与预设一致（ChatQwen 内部从此变量读取）
+            if api_key:
+                _os.environ["DASHSCOPE_API_KEY"] = api_key
+            if api_base:
+                _os.environ["DASHSCOPE_API_BASE"] = api_base
             enable_thinking = thinking_model if thinking_model is not None else False
             return ChatQwen(
                 model_name=model_name,
