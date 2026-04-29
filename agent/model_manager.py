@@ -200,34 +200,57 @@ def _create_model_instance(mc: dict) -> object:
     try:
         # --- DeepSeek ---
         if provider == "deepseek":
+            if thinking_model is True:
+                # 推理模式：使用自定义 DeepSeekReasonerChatModel
+                # 官方 ChatDeepSeek 在多轮工具调用中会丢弃 reasoning_content，
+                # 导致 API 报错。自定义类通过 additional_kwargs 保留和恢复 reasoning_content。
+                from .deepseek_reasoner import DeepSeekReasonerChatModel
+                reasoner_kwargs = {
+                    "model_name": model_name,
+                    "api_key": api_key,
+                    "base_url": api_base or "https://api.deepseek.com",
+                    "temperature": temperature,
+                    "max_tokens": config.DEFAULT_MAX_TOKENS,
+                    "timeout": 120.0,
+                }
+                print(f"[模型创建] {model_name}: 使用 DeepSeekReasonerChatModel（推理模式）")
+                return DeepSeekReasonerChatModel(**reasoner_kwargs)
+
+            # 非推理模式：使用官方 ChatDeepSeek + 关闭思考
             from langchain_deepseek import ChatDeepSeek
-            return ChatDeepSeek(
-                model=model_name,
-                api_key=api_key,
-                **({"api_base": api_base} if api_base else {}),
-                temperature=temperature,
-                max_tokens=config.DEFAULT_MAX_TOKENS,
-            )
+            deepseek_kwargs = {
+                "model": model_name,
+                "api_key": api_key,
+                "temperature": temperature,
+                "max_tokens": config.DEFAULT_MAX_TOKENS,
+            }
+            if api_base:
+                deepseek_kwargs["api_base"] = api_base
+            if thinking_model is False:
+                # 通过 extra_body 传入思考模式关闭参数（extra_body 会被 OpenAI SDK 作为额外 JSON body 字段发送）
+                # 注意：不能用 model_kwargs，因为 BaseChatOpenAI 会将其展开为 completions.create() 的关键字参数，
+                # 而 OpenAI SDK 不认识 "thinking" 参数，会报 unexpected keyword argument
+                deepseek_kwargs["model_kwargs"] = {
+                    "extra_body": {"thinking": {"type": "disabled"}},
+                }
+                print(f"[模型创建] {model_name}: 思考模式已关闭")
+            return ChatDeepSeek(**deepseek_kwargs)
 
         # --- Qwen / QwQ ---
         # 注意：_BaseChatQwen 的 api_base 字段有 alias="base_url"，
         # 且 validate_environment 用 self.api_base 构建 openai client。
-        # 必须同时设置环境变量 DASHSCOPE_API_KEY，并用 api_base 参数名传入地址，
-        # 否则 openai client 会 fallback 到默认国际版地址导致 401。
+        # api_key 和 api_base 通过构造参数传入 ChatQwen，
+        # 不再覆盖全局 DASHSCOPE_API_KEY 环境变量
+        # （该变量被 pdf_vectorize.py 等脚本用于 OCR，覆盖会导致 InvalidApiKey）。
         elif provider == "qwen":
-            import os as _os
             from langchain_qwq import ChatQwen
-            # 确保 DASHSCOPE_API_KEY 环境变量与预设一致（ChatQwen 内部从此变量读取）
-            if api_key:
-                _os.environ["DASHSCOPE_API_KEY"] = api_key
-            if api_base:
-                _os.environ["DASHSCOPE_API_BASE"] = api_base
             enable_thinking = thinking_model if thinking_model is not None else False
             return ChatQwen(
                 model_name=model_name,
                 api_key=api_key,
                 **({"api_base": api_base} if api_base else {}),
-                enable_thinking=enable_thinking,
+                # enable_thinking=enable_thinking,
+                enable_thinking=False,
             )
 
         # --- Claude (Anthropic) ---
@@ -242,6 +265,19 @@ def _create_model_instance(mc: dict) -> object:
             if api_base:
                 kwargs["base_url"] = api_base
             return ChatAnthropic(**kwargs)
+
+        # --- OpenAI ---
+        elif provider == "openai":
+            from langchain_openai import ChatOpenAI
+            openai_kwargs = {
+                "model": model_name,
+                "api_key": api_key,
+                "temperature": temperature,
+                "max_tokens": config.DEFAULT_MAX_TOKENS,
+            }
+            if api_base:
+                openai_kwargs["base_url"] = api_base
+            return ChatOpenAI(**openai_kwargs)
 
         # --- Gemini (Google) ---
         elif provider in ("google", "google_genai"):
@@ -406,6 +442,24 @@ def clean_messages(messages: list, model_name: str = None) -> list:
     cleaned_messages = patch_messages
     if patched_count:
         print(f"[消息清理] 补充 {patched_count} 条缺失的工具响应消息")
+
+    # --- 第 1.5 步：清除带 tool_calls 的 AIMessage 的"预写"content ---
+    # Claude 等模型在发起 tool_calls 时会在 content 中"预写"猜测性内容（如提前写出搜索结果），
+    # 这些内容不是基于工具返回的实际数据，会导致下一轮 LLM 调用时上下文不一致
+    # （模型看到自己预写的"结果"与实际工具返回不符，产生上下文"重置"行为）。
+    # 解决：将此类 AIMessage 的 content 替换为空字符串，只保留 tool_calls。
+    strip_count = 0
+    for i, msg in enumerate(cleaned_messages):
+        if (isinstance(msg, AIMessage)
+                and getattr(msg, "tool_calls", None)
+                and getattr(msg, "content", "")):
+            content = msg.content
+            # 只处理非空的 str content（list 格式 content 可能包含图片，不清理）
+            if isinstance(content, str) and content.strip():
+                cleaned_messages[i] = msg.model_copy(update={"content": ""})
+                strip_count += 1
+    if strip_count:
+        print(f"[消息清理] 清除 {strip_count} 条 AI 消息的预写 content（保留 tool_calls）")
 
     # --- 第二步：处理消息内容格式 ---
     new_messages = []

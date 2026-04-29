@@ -1,0 +1,42 @@
+{"actor":"system","action":"agent.run.start","target":"run_d4i9lbuy","meta":"pattern:react · q:用一句话介绍 OpenClaw","level":"info","ts":1776847202589}
+{"actor":"system","action":"agent.run.done","target":"run_d4i9lbuy","meta":"ms:7209","level":"info","ts":1776847209796}
+{"actor":"user","action":"skill.install","target":"kpi-analyst","level":"info","ts":1776847298520}
+{"actor":"user","action":"tool.calc","target":"{\"expr\":\"(3+4)*5-10\"}","meta":"ms:0 ok:true","level":"info","ts":1776847409220}
+{"actor":"user","action":"tool.uuid_gen","target":"{\"n\":3}","meta":"ms:0 ok:true","level":"info","ts":1776847409231}
+{"actor":"user","action":"tool.web_search","target":"{\"query\":\"OpenClaw memory\"}","meta":"ms:949 ok:true","level":"info","ts":1776847410192}
+{"actor":"user","action":"knowledge.ingest","target":"openclaw-seed","meta":"chunks:1","level":"info","ts":1776847604354}
+{"actor":"user","action":"knowledge.search","target":"OpenClaw memory","level":"info","ts":1776847604397}
+{"actor":"user","action":"memory.save_fact","target":"user.project","meta":"agent-studio","level":"info","ts":1776847604408}
+{"actor":"user","action":"provider.test","target":"openrouter","meta":"models:346 ms:1208","level":"info","ts":1776847605661}
+{"actor":"user","action":"skill.install","target":"pdf-extract","level":"info","ts":1776848172938}
+{"actor":"user","action":"tool.web_search","target":"{\"query\":\"Model Context Protocol MCP\"}","meta":"ms:880 ok:false","level":"error","ts":1776848177281}
+{"actor":"user","action":"knowledge.search","target":"OpenClaw 的 memory 架构是怎么分层?","level":"info","ts":1776848179528}
+{"actor":"user","action":"skill.install","target":"code-review-guide","level":"info","ts":1776848988185}
+{"actor":"user","action":"tool.web_search","target":"{\"query\":\"Model Context Protocol MCP\"}","meta":"ms:1101 ok:false","level":"error","ts":1776849016098}
+{"actor":"user","action":"tool.code_exec","target":"{\"query\":\"Model Context Protocol MCP\"}","meta":"ms:0 ok:false","level":"error","ts":1776849056618}
+{"actor":"user","action":"tool.code_exec","target":"{\"from\":\"2025-01-01\",\"to\":\"2026-04-22\"}","meta":"ms:1 ok:false","level":"error","ts":1776849083205}
+{"actor":"user","action":"tool.calc","target":"{\"expr\":\"(3+4)*5-10\"}","meta":"ms:0 ok:true","level":"info","ts":1776849221644}
+{"actor":"user","action":"tool.calc","target":"{\"expr\":\"(3+4)*5-10\"}","meta":"ms:0 ok:true","level":"info","ts":1776849303054}
+{"actor":"user","action":"tool.date_diff","target":"{\"from\":\"2025-01-01\",\"to\":\"2026-04-22\"}","meta":"ms:0 ok:true","level":"info","ts":1776849306505}
+{"actor":"system","action":"agent.run.start","target":"run_u99ljudj","meta":"pattern:react · q:OpenClaw memory 架构怎么分层?","level":"info","ts":1776851434894}
+{"actor":"user","action":"knowledge.search","target":"OpenClaw 的 memory 架构是怎么分层?","level":"info","ts":1776851461717}
+{"actor":"user","action":"provider.test","target":"openrouter","meta":"models:346 ms:1436","level":"info","ts":1776851488200}
+{"actor":"user","action":"provider.test","target":"openrouter","meta":"models:346 ms:1256","level":"info","ts":1776851488711}
+{"actor":"system","action":"agent.run.start","target":"run_jkaqyssv","meta":"pattern:react · q:OpenClaw memory 架构怎么分层?","level":"info","ts":1776851679907}
+{"actor":"user","action":"knowledge.search","target":"OpenClaw 的 memory 架构是怎么分层?","level":"info","ts":1776851708833}
+{"actor":"user","action":"provider.test","target":"openrouter","meta":"models:346 ms:1359","level":"info","ts":1776851735901}
+{"actor":"system","action":"agent.run.start","target":"run_nf442m5w","meta":"pattern:react · q:OpenClaw memory 架构怎么分层?","level":"info","ts":1776851977175}
+{"actor":"system","action":"agent.run.done","target":"run_nf442m5w","meta":"ms:6971","level":"info","ts":1776851984144}
+{"actor":"user","action":"knowledge.search","target":"OpenClaw 的 memory 架构是怎么分层?","level":"info","ts":1776852065238}
+{"actor":"user","action":"knowledge.search","target":"OpenClaw 的 memory 架构是怎么分层?","level":"info","ts":1776852069283}
+{"actor":"system","action":"agent.run.start","target":"run_5tgyau47","meta":"pattern:react · q:17+4 等于几?","level":"info","ts":1776852169590}
+{"actor":"system","action":"agent.run.start","target":"run_bz3q6iix","meta":"pattern:react · q:用 web_search 搜 'Model Context Protocol' ","level":"info","ts":1776852308633}
+{"actor":"system","action":"agent.run.done","target":"run_bz3q6iix","meta":"ms:6894","level":"info","ts":1776852315525}
+{"actor":"system","action":"agent.run.start","target":"run_kn2rs21p","meta":"pattern:react · q:用 web_search 搜 'Model Context Protocol' ","level":"info","ts":1776852587323}
+{"actor":"system","action":"agent.run.done","target":"run_kn2rs21p","meta":"ms:7007","level":"info","ts":1776852594329}
+{"actor":"system","action":"agent.run.start","target":"run_svtk55h5","meta":"pattern:react · q:用 web_search 搜 'Model Context Protocol' ","level":"info","ts":1776852604449}
+{"actor":"system","action":"agent.run.done","target":"run_svtk55h5","meta":"ms:7516","level":"info","ts":1776852611966}
+{"actor":"system","action":"agent.run.start","target":"run_sh51ys1t","meta":"pattern:plan-execute · q:用 web_search 搜 'Model Context Protocol' ","level":"info","ts":1776852620303}
+{"actor":"system","action":"agent.run.done","target":"run_sh51ys1t","meta":"ms:5360","level":"info","ts":1776852625662}
+{"actor":"system","action":"agent.run.start","target":"run_mg2vb8my","meta":"pattern:react · q:用 web_search 搜 'Model Context Protocol' ","level":"info","ts":1776852702624}
+{"actor":"system","action":"agent.run.done","target":"run_mg2vb8my","meta":"ms:7283","level":"info","ts":1776852709906}

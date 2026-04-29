@@ -15,7 +15,7 @@ version: "1.0"
 
 ## Phase 2: Research
 - description: 竞品分析、素材收集
-- method: executor
+- method: agent
 - skill: content-research
 - required: false
 - review: false

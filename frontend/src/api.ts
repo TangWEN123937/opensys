@@ -96,6 +96,77 @@ export async function deleteSkill(name: string): Promise<void> {
   if (!res.ok) throw new Error(`删除技能失败: ${res.status}`)
 }
 
+// ==================== 工作流模板（data/workflows/） ====================
+
+/** 工作流模板摘要 */
+export interface WorkflowInfo {
+  file_name: string         // 不带 .md 的文件名（唯一标识）
+  name: string              // 工作流中文名
+  domain: string            // 领域标识
+  description: string       // 简介
+  keywords: string[]        // 关键词
+  phase_count: number       // phase 数量
+}
+
+/** 获取所有工作流模板 */
+export async function fetchWorkflows(): Promise<WorkflowInfo[]> {
+  const res = await fetch(`${BASE}/workflows`)
+  if (!res.ok) throw new Error(`获取工作流列表失败: ${res.status}`)
+  const data = await res.json()
+  return data.workflows
+}
+
+/** 获取指定工作流模板的完整文件内容 */
+export async function fetchWorkflowContent(fileName: string): Promise<string> {
+  const res = await fetch(`${BASE}/workflows/${encodeURIComponent(fileName)}`)
+  if (!res.ok) throw new Error(`获取工作流内容失败: ${res.status}`)
+  const data = await res.json()
+  return data.content
+}
+
+/** 保存工作流模板内容（仅对已有文件生效） */
+export async function saveWorkflowContent(fileName: string, content: string): Promise<void> {
+  const res = await fetch(`${BASE}/workflows/${encodeURIComponent(fileName)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+  if (!res.ok) throw new Error(`保存工作流失败: ${res.status}`)
+}
+
+/** 新建工作流模板（content 为空则使用默认 3 阶段模板） */
+export async function createWorkflow(params: {
+  fileName: string
+  name?: string
+  domain?: string
+  description?: string
+  content?: string
+}): Promise<void> {
+  const res = await fetch(`${BASE}/workflows`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file_name: params.fileName,
+      name: params.name || '',
+      domain: params.domain || '',
+      description: params.description || '',
+      content: params.content || '',
+    }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(data.detail || `创建工作流失败: ${res.status}`)
+  }
+}
+
+/** 删除工作流模板 */
+export async function deleteWorkflow(fileName: string): Promise<void> {
+  const res = await fetch(`${BASE}/workflows/${encodeURIComponent(fileName)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`删除工作流失败: ${res.status}`)
+}
+
 // ==================== 流程图拓扑 ====================
 
 /** 获取 LangGraph 流程图拓扑结构 */

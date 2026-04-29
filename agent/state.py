@@ -11,6 +11,15 @@ from langgraph.graph import add_messages
 from langchain_core.messages import BaseMessage
 
 
+def _last_value(existing, new):
+    """
+    并发安全的 LastValue reducer：同一 step 内多个工具更新同一 key 时取最后一个值。
+    原生 LastValue 通道在并发更新时会抛 INVALID_CONCURRENT_GRAPH_UPDATE 错误，
+    此 reducer 通过显式取最新值避免该问题。
+    """
+    return new
+
+
 class AgentState(TypedDict):
     """
     OpenSys Agent 全局状态
@@ -21,7 +30,6 @@ class AgentState(TypedDict):
         pending_command: 等待审批的命令内容
         risk_level: 当前操作的风险等级
         approval_result: 用户审批结果
-        todos: 任务计划清单（write_todos 工具管理）
     """
     # --- 对话消息（LangGraph 核心，使用 add_messages reducer 自动管理） ---
     messages: Annotated[list[BaseMessage], add_messages]
@@ -42,10 +50,6 @@ class AgentState(TypedDict):
     # 用户修改后的命令（当 approval_result == "modified" 时有值）
     modified_command: Optional[str]
 
-    # --- 任务计划（write_todos 工具通过 Command(update=...) 更新） ---
-    # 每个 todo: {"id": "1", "content": "...", "status": "pending/in_progress/completed", "priority": "high/medium/low"}
-    todos: Optional[list[dict]]
-
     # --- 动态模型切换（通过 CLI /model 命令或 API 参数设置） ---
     # {"model_name": "deepseek-chat"}
     # 完整配置从 MODEL_PRESETS 自动获取（含 isvision、thinking_model 等）
@@ -55,7 +59,8 @@ class AgentState(TypedDict):
 
     # Agent 给 Advisor 的情况摘要（结构化的"工作交接单"）
     # {"user_request": "...", "background": "...", "constraints": [...], "existing_progress": "...", "replan_reason": "..."}
-    advisor_context: Optional[dict]
+    # 使用 _last_value reducer：防止 request_planning 与其他工具并发更新时冲突
+    advisor_context: Annotated[Optional[dict], _last_value]
 
     # Advisor 产出的流水线（含 domain, template_used, phases 列表）
     pipeline: Optional[dict]
@@ -118,6 +123,12 @@ class AgentState(TypedDict):
     # phase_done 设为 True → agent 汇报时 agent_router 据此拦截 request_planning
     # agent_node 入口检测到新 HumanMessage 时清除，同时清空旧 pipeline/phase_status/todos
     _pipeline_just_done: bool
+
+    # --- 任务输出目录 ---
+    # 每次 pipeline 创建时由 Advisor 生成独立目录（如 output/20260420_1435_排水管网论文/）
+    # 包含 output/ 和 downloads/ 子目录，所有阶段共享此目录
+    # Executor/Browser 通过此字段确定文件存放路径
+    _task_dir: Optional[str]
 
     # --- 浏览器下载文件追踪 ---
     # 浏览器节点下载的文件绝对路径列表（多次 browser_node 调用时累积追加）

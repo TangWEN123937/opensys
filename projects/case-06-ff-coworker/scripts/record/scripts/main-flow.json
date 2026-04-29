@@ -1,0 +1,173 @@
+{
+  "name": "FF-CoWorker · 一人公司 AI 员工系统 · 90 秒主演示",
+  "baseUrl": "http://localhost:3210",
+  "viewport": { "width": 1440, "height": 900 },
+  "speedup": 2.0,
+  "steps": [
+    { "at": "0:00", "action": "navigate", "url": "/", "settleMs": 1500 },
+
+    {
+      "at": "0:02",
+      "action": "scene",
+      "anchor": "#hero",
+      "framing": "top",
+      "settleMs": 600,
+      "subtitle": "支持 6 个 AI 员工 7×24 在岗",
+      "hold": 6000
+    },
+
+    {
+      "at": "0:09",
+      "action": "scene",
+      "anchor": "#office-preview",
+      "framing": "center",
+      "settleMs": 600,
+      "subtitle": "支持 6 工位等距俯视图调度",
+      "hold": 6000
+    },
+
+    { "at": "0:17", "action": "navigate", "url": "/office", "settleMs": 1500 },
+
+    {
+      "at": "0:20",
+      "action": "scene",
+      "anchor": "#orchestra-control",
+      "framing": "center",
+      "settleMs": 600,
+      "subtitle": "支持 6 路 SSE 流式工具调用编排",
+      "hold": 6000
+    },
+
+    {
+      "at": "0:28",
+      "action": "moveTo",
+      "selector": "[data-testid='run-orchestra']",
+      "steps": 30
+    },
+
+    {
+      "at": "0:30",
+      "action": "click",
+      "selector": "[data-testid='run-orchestra']",
+      "subtitle": "一键启动 6 路并发任务编排",
+      "subtitleHold": 6000
+    },
+
+    { "at": "0:32", "action": "wait", "ms": 6500 },
+
+    {
+      "at": "0:39",
+      "action": "subtitle",
+      "text": "实时呈现工具调用与 token 用量",
+      "hold": 6000
+    },
+
+    {
+      "at": "0:46",
+      "action": "scene",
+      "anchor": { "scrollBy": 320 },
+      "settleMs": 400,
+      "scrollDuration": 1500,
+      "subtitle": "支持独立 context 跨员工并发",
+      "hold": 6000
+    },
+
+    { "at": "0:56", "action": "wait", "ms": 6500 },
+
+    {
+      "at": "1:03",
+      "action": "navigate",
+      "url": "/employee/alex",
+      "settleMs": 1500
+    },
+
+    {
+      "at": "1:06",
+      "action": "subtitle",
+      "text": "支持 8 大机制 token 实时占用",
+      "hold": 6000
+    },
+
+    {
+      "at": "1:13",
+      "action": "click",
+      "selector": "[data-testid='run-agent']"
+    },
+
+    { "at": "1:15", "action": "wait", "ms": 4000 },
+
+    {
+      "at": "1:19",
+      "action": "subtitle",
+      "text": "基于 Sonnet 4.6 流式真实推理",
+      "hold": 6500
+    },
+
+    { "at": "1:26", "action": "wait", "ms": 9000 },
+
+    {
+      "at": "1:35",
+      "action": "subtitle",
+      "text": "自动定位代码并提交 Gitee PR",
+      "hold": 6000
+    },
+
+    { "at": "1:42", "action": "wait", "ms": 5000 },
+
+    {
+      "at": "1:47",
+      "action": "navigate",
+      "url": "/feishu",
+      "settleMs": 1500
+    },
+
+    {
+      "at": "1:50",
+      "action": "subtitle",
+      "text": "支持飞书消息触发任意员工",
+      "hold": 6000
+    },
+
+    {
+      "at": "1:57",
+      "action": "scene",
+      "anchor": { "scrollBy": 200 },
+      "settleMs": 400,
+      "scrollDuration": 1200,
+      "subtitle": "实现一句话指令到任务派发",
+      "hold": 6000
+    },
+
+    {
+      "at": "2:07",
+      "action": "navigate",
+      "url": "/scenarios",
+      "settleMs": 1500
+    },
+
+    {
+      "at": "2:10",
+      "action": "subtitle",
+      "text": "支持 5 类一人公司落地模板",
+      "hold": 6000
+    },
+
+    { "at": "2:17", "action": "wait", "ms": 4000 },
+
+    {
+      "at": "2:21",
+      "action": "navigate",
+      "url": "/",
+      "settleMs": 1500
+    },
+
+    {
+      "at": "2:24",
+      "action": "subtitle",
+      "text": "FF-CoWorker · AI 员工系统",
+      "hold": 8000
+    },
+
+    { "at": "2:33", "action": "wait", "ms": 3000 }
+  ]
+}

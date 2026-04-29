@@ -1,0 +1,68 @@
+/* 录制专用虚拟鼠标 + 字幕条 · 由 runner.mjs 通过 addInitScript 注入 */
+
+html, body, *:not(input):not(textarea) { cursor: none !important; }
+
+.__rec-cursor {
+  position: fixed;
+  pointer-events: none;
+  z-index: 2147483647;
+  left: 0; top: 0;
+  width: 28px; height: 36px;
+  opacity: 0;
+  transform: translate(-2px, -2px);
+  transition: opacity 200ms ease, transform 120ms ease;
+  will-change: left, top;
+}
+.__rec-cursor.is-visible { opacity: 1; }
+.__rec-cursor.is-pressed { transform: translate(-2px, -2px) scale(0.86); }
+.__rec-cursor svg {
+  width: 100%; height: 100%;
+  fill: #ffffff;
+  filter: drop-shadow(1px 2px 4px rgba(0, 0, 0, 0.55));
+}
+
+.__rec-ripple {
+  position: fixed;
+  pointer-events: none;
+  z-index: 2147483646;
+  left: 0; top: 0;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0.4);
+  opacity: 0;
+  background: rgba(255, 255, 255, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+}
+.__rec-ripple.is-firing {
+  animation: __rec-ripple-anim 460ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes __rec-ripple-anim {
+  0%   { opacity: 0.85; transform: translate(-50%, -50%) scale(0.5); }
+  100% { opacity: 0;    transform: translate(-50%, -50%) scale(2.6); }
+}
+
+.__rec-subtitle {
+  position: fixed;
+  left: 50%; bottom: 96px;
+  transform: translateX(-50%);
+  max-width: 88vw;
+  padding: 18px 36px;
+  background: rgba(0, 0, 0, 0.86);
+  color: #FFD60A;          /* iOS-style 亮金黄 · 配深色背景突出 */
+  font-size: 36px;         /* 大尺寸 · 直播 / 案例宣传片可视性优先 */
+  line-height: 1.35;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: 16px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  text-align: center;
+  z-index: 2147483645;
+  opacity: 0;
+  transition: opacity 240ms ease, transform 240ms ease;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  text-shadow: 0 3px 8px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 214, 10, 0.22);
+}
+.__rec-subtitle.is-visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+.__rec-subtitle.is-hidden  { opacity: 0; transform: translateX(-50%) translateY(8px); }

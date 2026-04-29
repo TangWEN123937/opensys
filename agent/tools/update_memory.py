@@ -23,6 +23,77 @@ from .. import config
 _has_read_memory = False
 
 
+# ==================== 安全扫描（防 prompt injection）====================
+
+# 危险模式：尝试通过记忆注入篡改 system prompt 行为的模式
+_INJECTION_PATTERNS = [
+    # 角色劫持：尝试修改 AI 身份或角色
+    (r'(?i)(you\s+are\s+now|from\s+now\s+on\s+you|ignore\s+previous|forget\s+all|disregard\s+instructions)',
+     "角色劫持尝试"),
+    # 系统指令伪装：尝试伪装成系统消息
+    (r'(?i)(\[system\]|\[INST\]|<\|system\|>|<system>|<<SYS>>)',
+     "系统指令伪装"),
+    # 凭据窃取：尝试让 AI 泄露密钥/令牌
+    (r'(?i)(reveal\s+your\s+(api|secret|key|token|password)|output\s+your\s+(system|instructions|prompt))',
+     "凭据窃取尝试"),
+    # 不可见 Unicode 字符（零宽空格、不可见连接符等，常用于隐藏指令）
+    (r'[\u200b\u200c\u200d\u2060\ufeff]',
+     "检测到不可见 Unicode 字符（可能用于隐藏指令）"),
+]
+
+
+def _scan_injection(content: str) -> str | None:
+    """
+    扫描内容中是否包含 prompt injection 模式
+
+    Args:
+        content: 待写入的记忆内容
+
+    Returns:
+        None 表示安全，str 表示拦截原因
+    """
+    for pattern, reason in _INJECTION_PATTERNS:
+        if re.search(pattern, content):
+            return reason
+    return None
+
+
+# ==================== 去重检查 ====================
+
+def _check_duplicate(existing_content: str, new_content: str) -> str | None:
+    """
+    检查新内容是否与已有记忆中的条目重复
+
+    检查策略：
+    1. 完全相同的条目（去除首尾空白后）
+    2. 新内容的每一行是否已存在于现有内容中（逐行检查）
+
+    Args:
+        existing_content: 已有的 memory.md 全文
+        new_content: 即将追加的内容
+
+    Returns:
+        None 表示无重复，str 表示重复的条目文本
+    """
+    # 将已有内容的每一行规范化后存入集合（快速查找）
+    existing_lines = set()
+    for line in existing_content.split("\n"):
+        stripped = line.strip()
+        if stripped and stripped.startswith("- "):
+            existing_lines.add(stripped)
+
+    # 检查新内容中的每一行是否已存在
+    duplicates = []
+    for line in new_content.split("\n"):
+        stripped = line.strip()
+        if stripped and stripped.startswith("- ") and stripped in existing_lines:
+            duplicates.append(stripped)
+
+    if duplicates:
+        return "\n".join(duplicates[:3])  # 最多展示 3 条重复
+    return None
+
+
 def _read_memory_file() -> str:
     """读取 memory.md 文件内容，不存在则返回默认模板"""
     memory_path: Path = config.MEMORY_FILE
@@ -194,6 +265,24 @@ def update_memory(
             return "❌ 参数错误：append/rewrite 操作需要指定 section 参数。"
         if not content:
             return "❌ 参数错误：append/rewrite 操作需要指定 content 参数。"
+
+        # 安全扫描：检测 prompt injection 模式
+        injection_reason = _scan_injection(content)
+        if injection_reason:
+            return (
+                f"🛡️ 安全拦截：内容包含可疑模式——{injection_reason}\n"
+                f"记忆内容会注入 system prompt，不允许包含可能篡改 AI 行为的指令。\n"
+                f"请修改内容后重试。"
+            )
+
+        # 去重检查（仅 append 时检查）
+        if action == "append":
+            dup = _check_duplicate(current, content)
+            if dup:
+                return (
+                    f"⚠️ 去重拦截：以下条目已存在于记忆中，无需重复添加：\n{dup}\n"
+                    f"如需更新已有条目，请使用 action='rewrite' 重写该章节。"
+                )
 
         section_header = f"## {section}"
 

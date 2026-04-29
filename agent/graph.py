@@ -30,7 +30,7 @@ from .security import assess_risk, format_approval_request
 from .context_compression import compress_context, summarize_old_messages
 from .vector_store import VectorStoreManager, slice_conversation_turns
 from .model_manager import get_llm, get_base_llm, clean_messages, apply_claude_message_cache
-from .skill_loader import load_skills_for_prompt
+# load_skills_for_prompt 已移除：非 Pipeline 模式下 agent 不加载 Skill（保持 prefix cache 稳定）
 from .task_classifier import needs_planning
 from .workflow_loader import discover_workflows, format_workflows_for_agent
 from .hooks import run_pre_hooks, run_post_hooks
@@ -40,7 +40,7 @@ from .subagents.dispatcher import dispatcher_node
 from .subagents.executor import executor_node
 from .subagents.reviewer import reviewer_node
 from .subagents.phase_done import phase_done_node
-from .utils import sanitize_text
+from .utils import sanitize_text, ensure_str_content, strip_text_tool_calls
 from . import config
 
 
@@ -71,9 +71,9 @@ _PROMPT_STANDALONE = """
 - `write_and_run_script`: 编写并执行脚本（Python、Bash、Node.js）
 - `web_tool`: 轻量网络工具，支持 API 级别的搜索和网页内容提取（不涉及浏览器交互）
 - `ask_user`: 当你需要用户提供信息或帮助时，暂停并提问
-- `write_todos`: 创建和管理任务清单（复杂任务时使用）
 - `request_planning`: 请求 Advisor 顾问为复杂任务制定多阶段执行计划
 - `update_memory`: 管理跨对话持久化的记忆文档
+- `search_history`: 搜索历史对话记忆（跨对话检索过去讨论过的内容）
 
 **浏览器操作说明**：需要真实浏览器交互的任务（登录、填表、JS 动态页面、数据采集等）
 由独立的浏览器子代理执行，不通过 web_tool。你需要调用 request_planning 让 Advisor 规划，
@@ -115,6 +115,14 @@ Advisor 会自动安排浏览器子代理执行相关阶段。
 **注意：不要频繁调用此工具，只在确实发现值得长期记住的信息时才使用。**
 如果记忆文档接近上限，先 read 查看，再用 rewrite 精简旧内容。
 
+## 历史对话检索（search_history 工具）
+你可以搜索过去所有对话中讨论过的内容，不限于当前会话。当遇到以下情况时使用：
+- 用户提到"之前"、"上次"、"我们讨论过"、"之前说过"等关键词
+- 需要回忆之前的技术决策、解决方案、操作步骤
+- 用户的问题可能在之前的对话中已经解决过
+
+**注意**：历史数据需要消息数超过阈值后才会自动入库。新用户或新部署可能暂无历史数据。
+
 ## 定时任务
 系统支持 cron 定时任务。到达指定时间时，系统会自动向 Agent 发送消息并执行（无需人工干预）。
 用户要求设置定时任务时，使用 `run_terminal` 调用 API 创建：
@@ -125,9 +133,19 @@ curl -s -X POST http://localhost:8000/schedules -H 'Content-Type: application/js
 - **cron_expr**：`分 时 日 月 周`，如 `0 9 * * *`（每天9点）、`30 8 * * 1-5`（工作日8:30）
 - **once**：`true` 为一次性任务，执行后自动停用
 - 查看已有定时任务：`curl -s http://localhost:8000/schedules`
+
+## 技能反馈与改进
+当你按照 Skill（技能指南）执行任务后，如果发现以下情况，请用 `update_memory` 记录到「技能反馈」章节：
+- 技能步骤与实际环境不匹配（如 UI 变更、按钮位置变化）
+- 发现了更高效的替代步骤
+- 执行过程中遇到了技能未覆盖的边界情况
+- 用户对技能执行结果有修正意见
+
+格式示例：`- [技能名] 步骤3的"点击发布"按钮已移至页面右上角（2025-04）`
+这些反馈将帮助后续改进技能文档。
 """
 
-# --- Pipeline 模式独有（精简工具列表，不含 write_todos / request_planning / 记忆管理） ---
+# --- Pipeline 模式独有（精简工具列表，不含 request_planning / 记忆管理） ---
 _PROMPT_PIPELINE = """
 ## 你的能力（Pipeline 阶段模式）
 当前处于多阶段流水线执行模式，你可以使用以下工具完成当前阶段的任务：
@@ -172,27 +190,55 @@ def _cleanup_downloads_dir():
 
 # ==================== 图节点定义 ====================
 
+# --- 会话级提示词缓存（冻结快照模式）---
+# 保护 LLM 厂商的 prefix cache：memory/user_prompt/project 只在会话首次加载时读取文件，
+# 后续 agent_node 调用复用缓存值，确保 system prompt 不变。
+# 写入操作（update_memory）立即持久化到磁盘，但要到下次会话才生效。
+_prompt_cache: dict[str, str | None] = {
+    "memory": None,
+    "user_prompt": None,
+    "project": None,
+}
+
+
+def reset_prompt_cache() -> None:
+    """重置提示词缓存，供新会话启动时调用，强制下次从磁盘重新读取"""
+    for key in _prompt_cache:
+        _prompt_cache[key] = None
+    print("[提示词缓存] 已重置，下次将从磁盘重新读取")
+
+
 def _load_memory() -> str:
-    """加载 memory.md 记忆文档内容（如果存在）"""
+    """加载 memory.md 记忆文档内容（会话级缓存，首次调用后冻结）"""
+    if _prompt_cache["memory"] is not None:
+        return _prompt_cache["memory"]
+
+    result = ""
     if config.MEMORY_FILE.exists():
         try:
             content = config.MEMORY_FILE.read_text(encoding="utf-8").strip()
             if content:
                 char_count = len(content)
                 limit_info = f"（当前 {char_count}/{config.MEMORY_MAX_CHARS} 字符）"
-                return f"\n\n## 📝 用户记忆 {limit_info}\n{content}"
+                result = f"\n\n## 📝 用户记忆 {limit_info}\n{content}"
         except Exception:
             pass
-    return ""
+
+    _prompt_cache["memory"] = result
+    return result
 
 
 def _load_project() -> str:
     """
-    加载 data/project.md 项目声明文件（如果存在且有实质内容）
+    加载 data/project.md 项目声明文件（会话级缓存，首次调用后冻结）
 
     此文件由用户维护，AI 不可修改。为 AI 提供项目背景信息。
     纯注释模板（无实质内容）不注入，避免浪费 prompt 空间。
     """
+    if _prompt_cache["project"] is not None:
+        return _prompt_cache["project"]
+
+    result = ""
     if config.PROJECT_FILE.exists():
         try:
             content = config.PROJECT_FILE.read_text(encoding="utf-8").strip()
@@ -203,22 +249,30 @@ def _load_project() -> str:
                 # 如果去掉注释后只剩标题行（#开头），说明用户还没填写，不注入
                 non_header_lines = [l for l in lines if not l.strip().startswith("#")]
                 if non_header_lines:
-                    return f"\n\n## 📂 项目背景\n{content}"
+                    result = f"\n\n## 📂 项目背景\n{content}"
         except Exception:
             pass
-    return ""
+
+    _prompt_cache["project"] = result
+    return result
 
 
 def _load_user_prompt() -> str:
-    """加载 user_prompt.md 用户自定义提示词（如果存在）\n\n    此文件由用户维护，AI 不可修改。内容追加到 system prompt 末尾。"""
+    """加载 user_prompt.md 用户自定义提示词（会话级缓存，首次调用后冻结）\n\n    此文件由用户维护，AI 不可修改。内容追加到 system prompt 末尾。"""
+    if _prompt_cache["user_prompt"] is not None:
+        return _prompt_cache["user_prompt"]
+
+    result = ""
     if config.USER_PROMPT_FILE.exists():
         try:
             content = config.USER_PROMPT_FILE.read_text(encoding="utf-8").strip()
             if content:
-                return f"\n\n{content}"
+                result = f"\n\n{content}"
         except Exception:
             pass
-    return ""
+
+    _prompt_cache["user_prompt"] = result
+    return result
 
 
 def _build_system_prompt(state: AgentState) -> str:
@@ -230,9 +284,7 @@ def _build_system_prompt(state: AgentState) -> str:
     2. _PROMPT_STANDALONE（完整工具列表 + 规划判定 + 记忆管理，含 {workflow_summaries} 动态替换）
     3. user_prompt.md 用户自定义规则
     4. project.md 项目背景
-    5. 技能关键词匹配（load_skills_for_prompt）
-    6. memory.md 记忆文档
-    7. todos 状态渲染
+    5. memory.md 记忆文档
 
     Pipeline 模式（活跃 pipeline）：
     1. _PROMPT_BASE（身份、工作原则、注意事项）
@@ -254,7 +306,7 @@ def _build_system_prompt(state: AgentState) -> str:
 
     # 按模式组装基础提示词
     if _in_pipeline:
-        # Pipeline 模式：精简工具列表，不含规划判定/记忆管理/write_todos
+        # Pipeline 模式：精简工具列表，不含规划判定/记忆管理
         prompt = _PROMPT_BASE + _PROMPT_PIPELINE
     else:
         # 非 Pipeline 模式：完整工具列表 + 规划判定（含工作流摘要）+ 记忆管理
@@ -265,19 +317,14 @@ def _build_system_prompt(state: AgentState) -> str:
 
     if not _in_pipeline:
         # 非 Pipeline 模式：注入用户自定义提示词（任务分解、调试铁律、验证规范等）
-        # Pipeline 模式下跳过，避免 write_todos / 五阶段流程与 Pipeline 流程管理冲突
+        # Pipeline 模式下跳过，避免五阶段流程与 Pipeline 流程管理冲突
         prompt += _load_user_prompt()
 
     # 注入项目背景（用户填写了实质内容时才注入，两种模式都需要）
     prompt += _load_project()
 
-    if not _in_pipeline:
-        # 非 Pipeline 模式：按用户关键词动态匹配技能（首次提问不加载 Skill）
-        # Pipeline 模式下技能改为在阶段段内精确加载 phase.skill
-        user_query = _extract_latest_user_query(state.get("messages", []))
-        skills_text = load_skills_for_prompt(user_query)
-        if skills_text:
-            prompt += skills_text
+    # 非 Pipeline 模式不加载 Skill（agent 无需技能指令，保持 prompt 稳定以利用 prefix cache）
+    # Pipeline 模式下技能在阶段段内精确加载 phase.skill
 
     # 注入 memory.md 记忆文档（两种模式都需要）
     prompt += _load_memory()
@@ -335,7 +382,7 @@ def _build_system_prompt(state: AgentState) -> str:
                 f"2. 当前阶段完成后，**立即输出阶段总结并停止**，系统会自动推进到下一阶段\n"
                 f"3. **绝对不要**试图一次性完成多个阶段的工作\n"
                 f"4. 如果当前阶段需要使用工具，正常调用即可\n"
-                f"5. **禁止使用 write_todos 工具**——Pipeline 模式下任务由系统自动管理\n"
+                f"5. Pipeline 模式下任务由系统自动管理，无需手动管理清单\n"
                 f"{future_warning}"
             )
             # 注入精确加载的技能内容（紧跟在 Pipeline 段之后）
@@ -356,68 +403,35 @@ def _build_system_prompt(state: AgentState) -> str:
                 f"5. 报告输出后，使用 ask_user 请求用户验收\n"
             )
 
-    # 非 Pipeline 模式下：如果有任务清单，追加到 system prompt 末尾
-    # Pipeline 模式下跳过 todos 渲染，避免 LLM 混淆两套任务管理机制
-    todos = state.get("todos")
-    if todos and not _in_pipeline:
-        todo_lines = ["\n\n## 📋 当前任务清单"]
-        status_emoji = {"pending": "⏳", "in_progress": "🔄", "completed": "✅"}
-        priority_emoji = {"high": "🔴", "medium": "🟡", "low": "⚪"}
-        for t in todos:
-            s = status_emoji.get(t.get("status", "pending"), "❓")
-            p = priority_emoji.get(t.get("priority", "medium"), "")
-            content = t.get("content", "")
-            todo_lines.append(f"- {s} {p} [{t.get('id', '?')}] {content}")
-
-        # 统计
-        total = len(todos)
-        completed = sum(1 for t in todos if t.get("status") == "completed")
-        in_progress = sum(1 for t in todos if t.get("status") == "in_progress")
-        pending = total - completed - in_progress
-        todo_lines.append(f"\n进度：{completed}/{total} 完成，{in_progress} 进行中，{pending} 待执行")
-
-        # 任务完成报告触发：当所有 todo 都已 completed 时
-        if completed == total and total > 0:
-            todo_lines.append(
-                "\n🎯 **所有任务已完成！** 请立即输出任务完成报告（格式参考'任务完成报告规范'章节），"
-                "包含：状态、概述、变更清单、验证结果、遗留问题。"
-                "报告输出后，使用 ask_user 请求用户验收。"
-            )
-        elif in_progress > 0:
-            todo_lines.append("请继续执行当前 in_progress 的任务，完成后用 write_todos 标记为 completed。")
-        elif pending > 0 and in_progress == 0:
-            todo_lines.append("有待执行的任务但没有 in_progress 的任务，请选择下一个 pending 任务开始执行。")
-
-        prompt += "\n".join(todo_lines)
-
     return prompt
 
 
 # ==================== 向量化检索与入库 ====================
 
-async def _retrieve_conversation_memory(query: str, thread_id: str) -> str:
+async def _retrieve_conversation_memory(query: str, thread_id: str = "") -> str:
     """
-    检索本线程的历史对话记忆，格式化为可注入消息列表的文本
+    检索历史对话记忆，格式化为可注入消息列表的文本
 
     仅在超阈值入库时调用（不在每次 LLM 调用时执行），避免 system prompt 不稳定。
-    检索范围限制为当前 thread_id，不跨线程共享。
+    跨线程检索：不限制 thread_id，搜索所有历史对话记忆。
 
     Args:
         query: 用户最近输入（作为检索 query）
-        thread_id: 当前对话线程 ID（限制检索范围）
+        thread_id: 当前对话线程 ID（仅用于日志，不限制检索范围）
 
     Returns:
         格式化的历史记忆文本，空字符串表示无结果或失败
     """
-    if not query or not thread_id:
+    if not query:
         return ""
 
     try:
         vs = VectorStoreManager()
         try:
+            # 跨线程检索：不传 thread_id，搜索所有历史对话
             results = await vs.search_conversations(
                 query=query,
-                thread_id=thread_id,  # 只检索本线程
+                thread_id=None,
             )
         finally:
             await vs.close()
@@ -512,14 +526,22 @@ async def vectorize_old_messages(
 
     # 检查是否需要触发
     msg_count = len(non_system)
-    if msg_count <= trigger_messages:
-        total_chars = sum(_estimate_chars(m) for m in non_system)
-        estimated_tokens = total_chars // 3
-        if estimated_tokens <= trigger_tokens:
-            return None
+    total_chars = sum(_estimate_chars(m) for m in non_system)
+    estimated_tokens = total_chars // 3
+    triggered_by_tokens = estimated_tokens > trigger_tokens
+    triggered_by_messages = msg_count > trigger_messages
+
+    if not triggered_by_tokens and not triggered_by_messages:
+        return None
+
+    # token 超阈值触发时，保留消息数取「配置值」和「消息数一半」中的较小值
+    # 防止消息数 < keep_messages 导致 _find_safe_split 返回 0 的 bug
+    actual_keep = keep_messages
+    if triggered_by_tokens and msg_count < keep_messages * 2:
+        actual_keep = max(msg_count // 2, 4)  # 至少保留 4 条消息
 
     # 找到安全分割点（不打断 AI + ToolMessage 配对）
-    split_idx = _find_safe_split(non_system, keep_messages)
+    split_idx = _find_safe_split(non_system, actual_keep)
     if split_idx <= 0:
         return None
 
@@ -586,6 +608,41 @@ def _estimate_chars(msg) -> int:
     return 0
 
 
+def _remove_orphan_tool_messages(messages: list) -> list:
+    """
+    移除孤儿 ToolMessage（其 tool_call_id 在消息列表中的 AIMessage.tool_calls 中找不到）
+
+    向量化入库或摘要压缩删除旧消息后，可能留下这样的 ToolMessage：
+    - 对应的 AIMessage(tool_calls) 已被删除
+    - clean_messages 补的无 id ToolMessage 未被 RemoveMessage 清理
+    上游 API（如 GPT-5.5）要求每条 ToolMessage 都有配对的 AIMessage，否则返回 400。
+    """
+    # 收集所有 AIMessage 中的 tool_call id
+    valid_call_ids = set()
+    for msg in messages:
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            for tc in msg.tool_calls:
+                cid = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                if cid:
+                    valid_call_ids.add(cid)
+
+    # 过滤掉找不到配对的 ToolMessage
+    cleaned = []
+    orphan_count = 0
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            tcid = getattr(msg, "tool_call_id", None)
+            if tcid and tcid not in valid_call_ids:
+                orphan_count += 1
+                continue
+        cleaned.append(msg)
+
+    if orphan_count:
+        print(f"[消息清理] 移除 {orphan_count} 条孤儿 ToolMessage（对应的 AIMessage 已被入库删除）")
+
+    return cleaned
+
+
 def _find_safe_split(messages: list, keep: int) -> int:
     """
     找到安全分割点，不打断 AI(tool_calls) + ToolMessage 配对
@@ -634,7 +691,7 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict:
     2. 消息清理（修复不完整工具调用序列 + 视觉/非视觉 content 格式转换）
     3. 向量化入库（超阈值时将旧对话存入 ChromaDB + 检索本线程记忆注入 HumanMessage，零 Token 消耗）
        - 若向量化失败，回退到 LLM 摘要压缩（兜底）
-    4. 构建动态 system prompt（注入 todos 状态，不含向量检索，保证 prompt 稳定以利用厂商缓存）
+    4. 构建动态 system prompt（不含向量检索，保证 prompt 稳定以利用厂商缓存）
     5. Claude 多轮对话增量缓存（原地修改 HumanMessage 添加 cache_control）
     6. 调用 LLM 生成回复
     """
@@ -655,7 +712,6 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict:
                 if state.get("phase_status") == "done":
                     _state_cleanup["pipeline"] = None
                     _state_cleanup["phase_status"] = None
-                    _state_cleanup["todos"] = None
                     # 清空下载文件追踪列表 + 清理下载目录中的旧文件
                     if state.get("downloaded_files"):
                         _state_cleanup["downloaded_files"] = None
@@ -709,20 +765,23 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict:
         # 将 vector_update 中非 RemoveMessage 的消息（记忆 HumanMessage）插到前面
         memory_msgs = [m for m in vector_update["messages"] if not isinstance(m, RemoveMessage)]
         remaining_msgs = memory_msgs + remaining_msgs
+        # 移除孤儿 ToolMessage（对应 AIMessage 可能被入库删除）
+        remaining_msgs = _remove_orphan_tool_messages(remaining_msgs)
 
         # 构建 system prompt + 剩余消息，调用 LLM
         system_prompt = _build_system_prompt(state)
         llm_messages = [SystemMessage(content=system_prompt)]
         for m in remaining_msgs:
             if not isinstance(m, SystemMessage):
+                # 只对 str content 做 surrogate 清理，不转换 list content（保护多模态图片）
                 if hasattr(m, "content") and isinstance(m.content, str):
                     m.content = sanitize_text(m.content)
                 llm_messages.append(m)
 
         apply_claude_message_cache(model_name, llm_messages)
         response = await llm.ainvoke(llm_messages)
-        if hasattr(response, "content") and isinstance(response.content, str):
-            response.content = sanitize_text(response.content)
+        if hasattr(response, "content"):
+            response.content = strip_text_tool_calls(sanitize_text(ensure_str_content(response.content)))
 
         # 返回：RemoveMessage（checkpoint 瘦身）+ 记忆 HumanMessage + AI 回复
         vector_update["messages"].append(response)
@@ -737,6 +796,8 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict:
         compressed_msgs = [m for m in messages if not (hasattr(m, 'id') and m.id in remove_ids)]
         summary_msgs = [m for m in summary_update["messages"] if not isinstance(m, RemoveMessage)]
         compressed_msgs = summary_msgs + compressed_msgs
+        # 移除孤儿 ToolMessage（对应 AIMessage 可能被摘要压缩删除）
+        compressed_msgs = _remove_orphan_tool_messages(compressed_msgs)
 
         system_prompt = _build_system_prompt(state)
         llm_messages = [SystemMessage(content=system_prompt)]
@@ -748,8 +809,8 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict:
 
         apply_claude_message_cache(model_name, llm_messages)
         response = await llm.ainvoke(llm_messages)
-        if hasattr(response, "content") and isinstance(response.content, str):
-            response.content = sanitize_text(response.content)
+        if hasattr(response, "content"):
+            response.content = strip_text_tool_calls(sanitize_text(ensure_str_content(response.content)))
 
         summary_update["messages"].append(response)
         summary_update.update(_state_cleanup)
@@ -760,7 +821,7 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict:
     new_messages = [SystemMessage(content=system_prompt)]
     for m in messages:
         if not isinstance(m, SystemMessage):
-            # 清理所有消息 content 中的 surrogate 字符（防止 LLM 引用后导致序列化失败）
+            # 只对 str content 做 surrogate 清理，不转换 list content（保护多模态图片）
             if hasattr(m, "content") and isinstance(m.content, str):
                 m.content = sanitize_text(m.content)
             new_messages.append(m)
@@ -771,9 +832,9 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict:
     # --- 第六步：调用 LLM ---
     response = await llm.ainvoke(new_messages)
 
-    # --- 清理响应中的无效 surrogate 字符（防止下游序列化报错） ---
-    if hasattr(response, "content") and isinstance(response.content, str):
-        response.content = sanitize_text(response.content)
+    # --- 清理响应中的无效字符（兼容 Anthropic list content + surrogate + 残留 tool_call 标签） ---
+    if hasattr(response, "content"):
+        response.content = strip_text_tool_calls(sanitize_text(ensure_str_content(response.content)))
 
     result = {"messages": [response]}
     result.update(_state_cleanup)
@@ -932,6 +993,20 @@ def agent_router(state: AgentState) -> Literal["risk_assessment", "advisor", "ph
 
         # 如果 LLM 已经调了 request_planning
         if "request_planning" in tool_names:
+            # === 独占保护：request_planning 不允许与其他工具并行 ===
+            # Claude 有时会在一次响应中同时调用 request_planning + 其他工具（试图跳过规划直接执行），
+            # 这会导致规划与执行并行、文件依赖断裂等严重问题。
+            # 修复：只保留 request_planning，剥离其他所有工具调用。
+            if len(last_message.tool_calls) > 1:
+                planning_calls = [tc for tc in last_message.tool_calls if tc["name"] == "request_planning"]
+                other_names = [tc["name"] for tc in last_message.tool_calls if tc["name"] != "request_planning"]
+                last_message.tool_calls = planning_calls[:1]  # 只保留第一个 request_planning
+                tool_names = [tc["name"] for tc in last_message.tool_calls]
+                print(
+                    f"[路由保护] request_planning 独占：剥离同批其他 {len(other_names)} 个工具调用 "
+                    f"({','.join(other_names)})，仅保留 request_planning"
+                )
+
             # 拦截：pipeline 刚完成的汇报轮次，不允许触发新规划
             # 判断条件：_pipeline_just_done=True 且触发 agent 的不是用户新消息
             # （用户新消息 = 消息列表中 LLM 回复前的最后一条是 HumanMessage）
@@ -965,11 +1040,13 @@ def agent_router(state: AgentState) -> Literal["risk_assessment", "advisor", "ph
         # 兜底：LLM 没调 request_planning，但用户消息是多阶段任务
         # 仅在 Advisor 尚未被调用、且没有活跃 pipeline 在执行时触发
         # 注意：pipeline 完成后对象仍在 state 中（phase_status="done"），不应视为"正在执行"
+        # _pipeline_just_done=True 时也不触发：pipeline 刚完成的汇报轮次，不应发起新规划
         pipeline_active = (state.get("pipeline")
                            and state.get("phase_status") not in (None, "done", "aborted"))
         if (not state.get("advisor_called")
                 and not pipeline_active
-                and not state.get("advisor_context")):
+                and not state.get("advisor_context")
+                and not state.get("_pipeline_just_done")):
             user_text = _extract_latest_user_query(state.get("messages", []))
             should_plan, reason = needs_planning(user_text)
             if should_plan:
@@ -992,6 +1069,10 @@ def agent_router(state: AgentState) -> Literal["risk_assessment", "advisor", "ph
     if not state.get("advisor_called") and state.get("advisor_context"):
         return "advisor"
 
+    # Pipeline 刚完成，agent 汇报完毕 → 直接结束，不再路由到 phase_done
+    if state.get("_pipeline_just_done"):
+        return "__end__"
+
     # Pipeline 模式：agent 返回纯文本（当前 method=agent 阶段执行完毕）→ 推进到 phase_done
     pipeline = state.get("pipeline")
     if pipeline:
@@ -1004,15 +1085,17 @@ def agent_router(state: AgentState) -> Literal["risk_assessment", "advisor", "ph
     return "__end__"
 
 
-def pipeline_router(state: AgentState) -> Literal["agent", "browser", "dispatcher", "reviewer", "advisor", "__end__"]:
+def pipeline_router(state: AgentState) -> Literal["agent", "browser", "dispatcher", "executor", "reviewer", "advisor", "__end__"]:
     """
-    Pipeline 阶段路由（完整版，6 分支）
+    Pipeline 阶段路由（完整版，7 分支）
 
     决策优先级：
     1. needs_replan → 回 advisor 重新规划
     2. escalated → 回 agent（让主代理通知用户）
     3. needs_review → 路由到 reviewer 审查产出物
     4. rework → 重新路由到当前阶段执行节点（带审查反馈）
+       - executor/executor_parallel/executor_sequential → 直接进 executor（跳过 dispatcher，保留已有子任务分配）
+       - browser/agent → 回原执行节点
     5. 全部完成 → 回 agent（汇报成果）
     6. 按当前阶段 method 分派：agent / browser / dispatcher / reviewer
     """
@@ -1056,11 +1139,13 @@ def pipeline_router(state: AgentState) -> Literal["agent", "browser", "dispatche
     # rework 状态 → 重新路由到当前阶段的执行节点（审查反馈已在消息中）
     if phase_status == "rework":
         print(f"[Pipeline] rework → 重新执行 Phase {current + 1} (method={method})")
-        # 按原 method 重新执行
+        # executor/executor_parallel/executor_sequential → 直接进 executor，跳过 dispatcher
+        # 子任务已由 phase_done._mark_failed_subtasks_for_rework 精确标记了 rework/done 状态
+        # 如果重新走 dispatcher，会全量重新拆分子任务，覆盖已通过审查的产出
         if method == "browser":
             return "browser"
-        elif method in ("executor", "executor_parallel"):
-            return "dispatcher"
+        elif method in ("executor", "executor_parallel", "executor_sequential"):
+            return "executor"
         else:
             return "agent"  # method=agent 或其他都回主代理
 
@@ -1069,7 +1154,7 @@ def pipeline_router(state: AgentState) -> Literal["agent", "browser", "dispatche
         return "agent"              # 主代理亲自执行（需交互的阶段）
     elif method == "browser":
         return "browser"            # 浏览器子代理直接执行（不经过主 Agent）
-    elif method in ("executor", "executor_parallel"):
+    elif method in ("executor", "executor_parallel", "executor_sequential"):
         return "dispatcher"         # 去调度器分派子任务
     elif method == "reviewer":
         return "reviewer"           # 去审查
@@ -1214,7 +1299,7 @@ def build_graph() -> StateGraph:
 
     # --- P3 多代理流水线边 ---
 
-    # Advisor 完成后 → pipeline_router（6 分支：agent/browser/dispatcher/reviewer/advisor/__end__）
+    # Advisor 完成后 → pipeline_router（7 分支：agent/browser/dispatcher/executor/reviewer/advisor/__end__）
     graph.add_conditional_edges("advisor", pipeline_router)
 
     # Browser 浏览器子代理执行完 → phase_done 推进阶段

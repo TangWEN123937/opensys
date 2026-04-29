@@ -1,0 +1,374 @@
+{
+    "title": "2026/4/17 22:36:20 录制的内容-知网2",
+    "selectorAttribute": "data-testid",
+    "steps": [
+        {
+            "type": "setViewport",
+            "width": 1440,
+            "height": 809,
+            "deviceScaleFactor": 1,
+            "isMobile": false,
+            "hasTouch": false,
+            "isLandscape": false
+        },
+        {
+            "type": "navigate",
+            "url": "chrome://newtab/",
+            "assertedEvents": [
+                {
+                    "type": "navigation",
+                    "url": "chrome://newtab/",
+                    "title": "新的无痕式标签页"
+                }
+            ]
+        },
+        {
+            "type": "navigate",
+            "url": "http://lib.shutong2.com/",
+            "assertedEvents": [
+                {
+                    "type": "navigation",
+                    "url": "http://lib.shutong2.com/",
+                    "title": ""
+                }
+            ]
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "#user_name"
+                ],
+                [
+                    "xpath///*[@id=\"user_name\"]"
+                ],
+                [
+                    "pierce/#user_name"
+                ]
+            ],
+            "offsetY": 28,
+            "offsetX": 119.6666259765625
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "#user_name"
+                ],
+                [
+                    "xpath///*[@id=\"user_name\"]"
+                ],
+                [
+                    "pierce/#user_name"
+                ]
+            ],
+            "offsetY": 23,
+            "offsetX": 106.6666259765625
+        },
+        {
+            "type": "change",
+            "value": "77137348",
+            "selectors": [
+                [
+                    "#user_name"
+                ],
+                [
+                    "xpath///*[@id=\"user_name\"]"
+                ],
+                [
+                    "pierce/#user_name"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "#password"
+                ],
+                [
+                    "xpath///*[@id=\"password\"]"
+                ],
+                [
+                    "pierce/#password"
+                ]
+            ],
+            "offsetY": 25,
+            "offsetX": 63.6666259765625
+        },
+        {
+            "type": "change",
+            "value": "217063",
+            "selectors": [
+                [
+                    "#password"
+                ],
+                [
+                    "xpath///*[@id=\"password\"]"
+                ],
+                [
+                    "pierce/#password"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "#code"
+                ],
+                [
+                    "xpath///*[@id=\"code\"]"
+                ],
+                [
+                    "pierce/#code"
+                ],
+                [
+                    "text/验证码"
+                ]
+            ],
+            "offsetY": 11,
+            "offsetX": 87.6666259765625
+        },
+        {
+            "type": "change",
+            "value": "6074",
+            "selectors": [
+                [
+                    "#code"
+                ],
+                [
+                    "xpath///*[@id=\"code\"]"
+                ],
+                [
+                    "pierce/#code"
+                ],
+                [
+                    "text/验证码"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "#ok"
+                ],
+                [
+                    "xpath///*[@id=\"ok\"]"
+                ],
+                [
+                    "pierce/#ok"
+                ],
+                [
+                    "aria/立即登录"
+                ],
+                [
+                    "text/立即登录"
+                ]
+            ],
+            "offsetY": 16,
+            "offsetX": 73.6666259765625,
+            "assertedEvents": [
+                {
+                    "type": "navigation",
+                    "url": "https://3.shutong2.com/e/member/doaction.php",
+                    "title": ""
+                }
+            ]
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "#maincolumn > div:nth-of-type(3) span:nth-of-type(2) > a"
+                ],
+                [
+                    "xpath///*[@id=\"maincolumn\"]/div[3]/div[2]/span[2]/a"
+                ],
+                [
+                    "pierce/#maincolumn > div:nth-of-type(3) span:nth-of-type(2) > a"
+                ],
+                [
+                    "aria/知网入口2(推荐)"
+                ]
+            ],
+            "offsetY": 19,
+            "offsetX": 152.6666259765625
+        },
+        {
+            "type": "click",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index",
+            "selectors": [
+                [
+                    "#txt_search"
+                ],
+                [
+                    "xpath///*[@id=\"txt_search\"]"
+                ],
+                [
+                    "pierce/#txt_search"
+                ],
+                [
+                    "aria/中文文献、外文文献"
+                ]
+            ],
+            "offsetY": 26.666664123535156,
+            "offsetX": 59
+        },
+        {
+            "type": "change",
+            "value": "o",
+            "selectors": [
+                [
+                    "#txt_search"
+                ],
+                [
+                    "xpath///*[@id=\"txt_search\"]"
+                ],
+                [
+                    "pierce/#txt_search"
+                ],
+                [
+                    "aria/中文文献、外文文献"
+                ]
+            ],
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "keyUp",
+            "key": "o",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "change",
+            "value": "o'p",
+            "selectors": [
+                [
+                    "#txt_search"
+                ],
+                [
+                    "xpath///*[@id=\"txt_search\"]"
+                ],
+                [
+                    "pierce/#txt_search"
+                ],
+                [
+                    "aria/中文文献、外文文献"
+                ]
+            ],
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "keyUp",
+            "key": "p",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "keyDown",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index",
+            "key": "Process"
+        },
+        {
+            "type": "keyUp",
+            "key": "Process",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "change",
+            "value": "op",
+            "selectors": [
+                [
+                    "#txt_search"
+                ],
+                [
+                    "xpath///*[@id=\"txt_search\"]"
+                ],
+                [
+                    "pierce/#txt_search"
+                ],
+                [
+                    "aria/中文文献、外文文献"
+                ]
+            ],
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "keyUp",
+            "key": "Shift",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "change",
+            "value": "openclaw",
+            "selectors": [
+                [
+                    "#txt_search"
+                ],
+                [
+                    "xpath///*[@id=\"txt_search\"]"
+                ],
+                [
+                    "pierce/#txt_search"
+                ],
+                [
+                    "aria/中文文献、外文文献"
+                ]
+            ],
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "keyDown",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index",
+            "key": "Enter"
+        },
+        {
+            "type": "keyUp",
+            "key": "Enter",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index"
+        },
+        {
+            "type": "click",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index",
+            "selectors": [
+                [
+                    "#sortList li:nth-of-type(4)"
+                ],
+                [
+                    "xpath///*[@id=\"DFR\"]"
+                ],
+                [
+                    "pierce/#sortList li:nth-of-type(4)"
+                ]
+            ],
+            "offsetY": 15.90625,
+            "offsetX": 20.65625
+        },
+        {
+            "type": "click",
+            "target": "http://124.221.61.170:3344/kns8/defaultresult/index",
+            "selectors": [
+                [
+                    "tr:nth-of-type(1) a.downloadlink > i"
+                ],
+                [
+                    "xpath///*[@id=\"gridTable\"]/div/div/div/table/tbody/tr[1]/td[9]/a[1]/i"
+                ],
+                [
+                    "pierce/tr:nth-of-type(1) a.downloadlink > i"
+                ]
+            ],
+            "offsetY": 12.197906494140625,
+            "offsetX": 6.875
+        }
+    ]
+}

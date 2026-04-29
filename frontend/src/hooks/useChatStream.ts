@@ -7,7 +7,9 @@
 
 import { useCallback, useRef, useState } from 'react'
 import { getChatSSEUrl, getApproveSSEUrl, fetchConversationHistory } from '../api'
-import type { SSEEvent, ChatMessage, NodeStatus, PhaseInfo, ToolCallInfo, BrowserStepInfo } from '../types'
+import type { SSEEvent, ChatMessage, NodeStatus, PhaseInfo, ToolCallInfo, BrowserStepInfo, MemberRuntime, TeamEvent, GlobalAggregates } from '../types'
+import { emptyMemberRuntime } from '../types'
+import { getMember } from '../lib/members'
 
 /** 解析 SSE 文本行，提取事件 */
 function parseSSE(text: string): SSEEvent[] {
@@ -64,9 +66,43 @@ export function useChatStream() {
   const [error, setError] = useState<string | null>(null)
   const [approvalRequest, setApprovalRequest] = useState<Record<string, unknown> | null>(null)
 
+  // ==================== 团队办公室状态 ====================
+  /** 每个成员的实时运行状态 */
+  const [memberStates, setMemberStates] = useState<Record<string, MemberRuntime>>({})
+  /** 全员事件流（最多保留 100 条） */
+  const [eventFeed, setEventFeed] = useState<TeamEvent[]>([])
+  /** 全局聚合统计 */
+  const [globalAggregates, setGlobalAggregates] = useState<GlobalAggregates>({
+    totalTools: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    streamStartTime: 0,
+    activeNodes: 0,
+  })
+
   // 用 ref 追踪当前正在构建的 assistant 消息
   const currentAssistantRef = useRef<ChatMessage | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+
+  /** 向事件流推送一条事件（最多保留 100 条） */
+  const pushEvent = useCallback((from: string, kind: TeamEvent['kind'], text: string) => {
+    const evt: TeamEvent = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      from,
+      kind,
+      text,
+      timestamp: Date.now(),
+    }
+    setEventFeed(prev => {
+      const next = [...prev, evt]
+      return next.length > 100 ? next.slice(-100) : next
+    })
+  }, [])
+
+  /** 获取成员中文名（落到未知时显示节点 ID） */
+  const memberName = useCallback((nodeId: string) => {
+    return getMember(nodeId)?.name || nodeId
+  }, [])
 
   /** 发送消息并消费 SSE 流 */
   const sendMessage = useCallback(async (
@@ -95,6 +131,16 @@ export function useChatStream() {
     // 重置节点状态和技能
     setNodeStates({})
     setLoadedSkills(new Set())
+    // 重置团队办公室状态
+    setMemberStates({})
+    setEventFeed([])
+    setGlobalAggregates({
+      totalTools: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      streamStartTime: Date.now(),
+      activeNodes: 0,
+    })
 
     // 准备 assistant 消息容器
     const assistantMsg: ChatMessage = {
@@ -160,18 +206,28 @@ export function useChatStream() {
     }
   }, [threadId])
 
-  /** 处理单个 SSE 事件 */
+  /** 处理单个 SSE 事件（同时更新聊天状态 + 团队办公室状态） */
   const handleSSEEvent = useCallback((evt: SSEEvent, assistantMsg: ChatMessage) => {
     switch (evt.type) {
       case 'thread_id':
         setThreadId(evt.thread_id)
         break
 
-      case 'token':
+      case 'token': {
         assistantMsg.content += evt.content
         // 强制触发 re-render
         setMessages(prev => [...prev.slice(0, -1), { ...assistantMsg }])
+        // 更新成员最近思考内容
+        const tokenNode = evt.node
+        if (tokenNode) {
+          setMemberStates(prev => {
+            const cur = prev[tokenNode] || emptyMemberRuntime()
+            const merged = (cur.latestThinking + evt.content).slice(-120)
+            return { ...prev, [tokenNode]: { ...cur, latestThinking: merged } }
+          })
+        }
         break
+      }
 
       case 'reasoning':
         assistantMsg.reasoning = (assistantMsg.reasoning || '') + evt.content
@@ -182,6 +238,19 @@ export function useChatStream() {
         const tc: ToolCallInfo = { name: evt.tool_name, status: 'running' }
         assistantMsg.toolCalls = [...(assistantMsg.toolCalls || []), tc]
         setMessages(prev => [...prev.slice(0, -1), { ...assistantMsg }])
+        // 更新成员工具计数 + 当前工具
+        const toolNode = evt.node
+        if (toolNode) {
+          setMemberStates(prev => {
+            const cur = prev[toolNode] || emptyMemberRuntime()
+            return { ...prev, [toolNode]: { ...cur, toolCount: cur.toolCount + 1, currentTool: evt.tool_name } }
+          })
+        }
+        // 全局工具计数
+        setGlobalAggregates(prev => ({ ...prev, totalTools: prev.totalTools + 1 }))
+        // 事件流
+        const argsPart = evt.args_summary ? ` · ${evt.args_summary.slice(0, 80)}` : ''
+        pushEvent(toolNode || 'system', 'tool', `${memberName(toolNode || '')} → ${evt.tool_name}${argsPart}`)
         break
       }
 
@@ -193,15 +262,41 @@ export function useChatStream() {
           assistantMsg.toolCalls = [...calls]
           setMessages(prev => [...prev.slice(0, -1), { ...assistantMsg }])
         }
+        // 清除当前工具标记 + 产出物计数
+        const endNode = evt.node
+        if (endNode) {
+          setMemberStates(prev => {
+            const cur = prev[endNode] || emptyMemberRuntime()
+            return { ...prev, [endNode]: { ...cur, currentTool: '', artifacts: cur.artifacts + 1 } }
+          })
+        }
         break
       }
 
       case 'node_enter':
         setNodeStates(prev => ({ ...prev, [evt.node]: 'active' }))
+        // 更新成员状态
+        setMemberStates(prev => {
+          const cur = prev[evt.node] || emptyMemberRuntime()
+          return { ...prev, [evt.node]: { ...cur, status: 'active', enterTime: Date.now() } }
+        })
+        // 全局活跃节点数
+        setGlobalAggregates(prev => ({ ...prev, activeNodes: prev.activeNodes + 1 }))
+        // 事件流
+        pushEvent(evt.node, 'node', `${memberName(evt.node)} 开始工作`)
         break
 
       case 'node_exit':
         setNodeStates(prev => ({ ...prev, [evt.node]: 'completed' }))
+        // 更新成员状态
+        setMemberStates(prev => {
+          const cur = prev[evt.node] || emptyMemberRuntime()
+          return { ...prev, [evt.node]: { ...cur, status: 'completed', exitTime: Date.now(), currentTool: '' } }
+        })
+        // 全局活跃节点数
+        setGlobalAggregates(prev => ({ ...prev, activeNodes: Math.max(0, prev.activeNodes - 1) }))
+        // 事件流
+        pushEvent(evt.node, 'node', `${memberName(evt.node)} 完成`)
         break
 
       case 'phase_update':
@@ -212,7 +307,39 @@ export function useChatStream() {
           phase_method: evt.phase_method,
           phase_status: evt.phase_status,
         })
+        // 事件流
+        pushEvent('system', 'phase', `阶段 ${evt.current_phase + 1}/${evt.total_phases} · ${evt.phase_name}（${evt.phase_method}）`)
         break
+
+      case 'token_usage': {
+        // 更新成员 token 用量
+        const usageNode = evt.node
+        if (usageNode) {
+          setMemberStates(prev => {
+            const cur = prev[usageNode] || emptyMemberRuntime()
+            return {
+              ...prev,
+              [usageNode]: {
+                ...cur,
+                inputTokens: cur.inputTokens + evt.input_tokens,
+                outputTokens: cur.outputTokens + evt.output_tokens,
+              },
+            }
+          })
+        }
+        // 全局 token 用量
+        setGlobalAggregates(prev => ({
+          ...prev,
+          totalInputTokens: prev.totalInputTokens + evt.input_tokens,
+          totalOutputTokens: prev.totalOutputTokens + evt.output_tokens,
+        }))
+        // 事件流（仅在 token 数较大时推送，避免刷屏）
+        const totalTokens = evt.input_tokens + evt.output_tokens
+        if (totalTokens > 100) {
+          pushEvent(usageNode || 'system', 'token_usage', `${memberName(usageNode || '')} 消耗 ${totalTokens.toLocaleString()} tokens`)
+        }
+        break
+      }
 
       case 'browser_step': {
         // 将浏览器步骤追加到当前 assistant 消息的 browserSteps 数组
@@ -230,6 +357,8 @@ export function useChatStream() {
 
       case 'skill_loaded':
         setLoadedSkills(prev => new Set(prev).add(evt.skill_name))
+        // 事件流
+        pushEvent(evt.node || 'system', 'skill', `加载技能 ${evt.display_name || evt.skill_name}`)
         break
 
       case 'approval_request':
@@ -238,13 +367,15 @@ export function useChatStream() {
 
       case 'error':
         setError(evt.message)
+        pushEvent('system', 'error', evt.message)
         break
 
       case 'done':
         // 流结束
+        pushEvent('system', 'done', '执行完成')
         break
     }
-  }, [])
+  }, [pushEvent, memberName])
 
   /** 审批后通过 SSE 流式恢复图执行 */
   const resumeAfterApproval = useCallback(async (action: string, feedback?: string) => {
@@ -336,6 +467,10 @@ export function useChatStream() {
     setLoadedSkills(new Set())
     setError(null)
     setApprovalRequest(null)
+    // 重置团队办公室状态
+    setMemberStates({})
+    setEventFeed([])
+    setGlobalAggregates({ totalTools: 0, totalInputTokens: 0, totalOutputTokens: 0, streamStartTime: 0, activeNodes: 0 })
   }, [abort])
 
   /** 加载指定会话的历史消息 */
@@ -348,6 +483,10 @@ export function useChatStream() {
     setNodeStates({})
     setPhaseInfo(null)
     setLoadedSkills(new Set())
+    // 重置团队办公室状态
+    setMemberStates({})
+    setEventFeed([])
+    setGlobalAggregates({ totalTools: 0, totalInputTokens: 0, totalOutputTokens: 0, streamStartTime: 0, activeNodes: 0 })
 
     try {
       const history = await fetchConversationHistory(targetThreadId)
@@ -409,6 +548,10 @@ export function useChatStream() {
     loadedSkills,
     error,
     approvalRequest,
+    // 团队办公室状态
+    memberStates,
+    eventFeed,
+    globalAggregates,
     sendMessage,
     resumeAfterApproval,
     abort,

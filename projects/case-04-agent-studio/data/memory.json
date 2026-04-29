@@ -1,0 +1,33 @@
+{
+  "facts": [
+    {
+      "key": "user.lang",
+      "value": "中文",
+      "category": "preference",
+      "confidence": 1,
+      "updatedAt": 1776588404408
+    },
+    {
+      "key": "user.tz",
+      "value": "Asia/Shanghai",
+      "category": "fact",
+      "confidence": 1,
+      "updatedAt": 1776415604408
+    },
+    {
+      "key": "project.stack",
+      "value": "Next.js 16 · Tailwind v4 · shadcn",
+      "category": "fact",
+      "confidence": 0.92,
+      "updatedAt": 1776847604408
+    },
+    {
+      "key": "user.project",
+      "value": "agent-studio",
+      "category": "fact",
+      "confidence": 0.95,
+      "updatedAt": 1776847604408
+    }
+  ],
+  "turns": []
+}

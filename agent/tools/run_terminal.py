@@ -7,6 +7,7 @@ AI Agent 通过此工具执行 shell 命令，获取输出结果。
 """
 
 import asyncio
+import os
 import subprocess
 from langchain_core.tools import tool
 
@@ -14,22 +15,25 @@ from ..utils import sanitize_text
 
 
 @tool
-async def run_terminal(command: str, timeout: int = 60) -> str:
+async def run_terminal(command: str, timeout: int = 300) -> str:
     """在容器终端中执行命令并返回输出。
 
     Args:
         command: 要执行的 shell 命令
-        timeout: 超时时间（秒），默认 60 秒
+        timeout: 超时时间（秒），默认 300 秒
 
     Returns:
         命令的 stdout + stderr 输出，或超时/错误信息
     """
     try:
         # 使用 asyncio 子进程执行命令
+        # 设置 PYTHONUNBUFFERED 确保 Python 子进程输出不被缓冲
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
             # 限制输出大小，防止内存溢出
             limit=1024 * 1024  # 1MB
         )

@@ -89,8 +89,8 @@ def assess_risk(
         tool_name = tc.get("name", "")
         args = tc.get("args", {})
 
-        # ask_user / write_todos / update_memory / request_planning 工具始终安全（不执行任何系统命令）
-        if tool_name in ("ask_user", "write_todos", "update_memory", "request_planning"):
+        # ask_user / update_memory / request_planning / search_history 工具始终安全（不执行任何系统命令）
+        if tool_name in ("ask_user", "update_memory", "request_planning", "search_history"):
             continue
 
         # web_tool：search/extract 模式安全，browse 模式需审批

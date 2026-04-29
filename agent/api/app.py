@@ -40,7 +40,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, AIMess
 
 from ..graph import compile_graph
 from ..db.manager import DatabaseManager
-from ..utils import sanitize_text
+from ..utils import sanitize_text, ensure_str_content
 from ..safe_saver import SafeAsyncSqliteSaver
 from .. import config
 
@@ -167,6 +167,11 @@ async def chat_stream(request: ChatRequest):
     thread_id = request.thread_id or str(uuid.uuid4())
     is_new = request.thread_id is None
 
+    # 新会话时重置提示词缓存（冻结快照模式：确保读取最新 memory.md）
+    if is_new:
+        from ..graph import reset_prompt_cache
+        reset_prompt_cache()
+
     # 记录对话
     await db.create_conversation(thread_id)
 
@@ -210,6 +215,8 @@ async def chat_stream(request: ChatRequest):
 
         # 上一次发送的阶段编号（去重，避免重复推送 phase_update）
         _last_phase_idx = -1
+        # 当前活跃节点（用于给 token/tool 事件附加 node 归属）
+        _active_node = ""
 
         # --- 合并队列：将 astream_events 和 event_bus 合并到一个队列 ---
         # browser-use 使用自己的 LLM（不经过 LangChain），其执行期间
@@ -273,6 +280,7 @@ async def chat_stream(request: ChatRequest):
                 if kind == "on_chain_start":
                     chain_name = event.get("name", "")
                     if chain_name in _GRAPH_NODES:
+                        _active_node = chain_name
                         yield _sse_event("node_enter", {"node": chain_name})
                         # 检查是否有阶段变化（从输入 state 提取）
                         inp = data.get("input", {})
@@ -301,6 +309,9 @@ async def chat_stream(request: ChatRequest):
                     print(f"[API-Debug-ALL] on_chain_end name='{chain_name}' output={_out_keys}")
                     if chain_name in _GRAPH_NODES:
                         yield _sse_event("node_exit", {"node": chain_name})
+                        # 清除活跃节点标记
+                        if _active_node == chain_name:
+                            _active_node = ""
                         # 对于不触发 on_chat_model_stream 的 subagent 节点
                         # （如 browser_node 内部用 browser-use 自己的 LLM 循环，
                         #   advisor/executor/reviewer 返回的结构化 AIMessage 也同理），
@@ -323,18 +334,46 @@ async def chat_stream(request: ChatRequest):
                 if kind == "on_chat_model_stream":
                     chunk = data.get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
-                        yield _sse_event("token", {"content": sanitize_text(chunk.content)})
+                        # Anthropic 返回 list 格式 content，需先转为 str
+                        _text = sanitize_text(ensure_str_content(chunk.content))
+                        if _text:
+                            yield _sse_event("token", {"content": _text, "node": _active_node})
 
                     # 深度思考内容（DeepSeek Reasoner 等模型）
                     if chunk and hasattr(chunk, "additional_kwargs"):
                         reasoning = chunk.additional_kwargs.get("reasoning_content")
                         if reasoning:
-                            yield _sse_event("reasoning", {"content": sanitize_text(reasoning)})
+                            yield _sse_event("reasoning", {"content": sanitize_text(reasoning), "node": _active_node})
 
-                # 工具调用开始
+                # LLM 调用结束：提取 token 用量
+                elif kind == "on_chat_model_end":
+                    output_msg = data.get("output")
+                    if output_msg and hasattr(output_msg, "usage_metadata") and output_msg.usage_metadata:
+                        _usage = output_msg.usage_metadata
+                        yield _sse_event("token_usage", {
+                            "node": _active_node,
+                            "input_tokens": getattr(_usage, "input_tokens", 0) or 0,
+                            "output_tokens": getattr(_usage, "output_tokens", 0) or 0,
+                        })
+
+                # 工具调用开始（附带参数摘要）
                 elif kind == "on_tool_start":
                     tool_name = event.get("name", "")
-                    yield _sse_event("tool_start", {"tool_name": tool_name})
+                    # 从 data.input 提取工具参数摘要（截断避免过长）
+                    _tool_input = data.get("input", {})
+                    _args_summary = ""
+                    if isinstance(_tool_input, dict):
+                        try:
+                            _args_summary = json.dumps(_tool_input, ensure_ascii=False, default=str)[:500]
+                        except Exception:
+                            _args_summary = str(_tool_input)[:500]
+                    elif isinstance(_tool_input, str):
+                        _args_summary = _tool_input[:500]
+                    yield _sse_event("tool_start", {
+                        "tool_name": tool_name,
+                        "node": _active_node,
+                        "args_summary": _args_summary,
+                    })
 
                 # 工具调用结束
                 elif kind == "on_tool_end":
@@ -342,6 +381,7 @@ async def chat_stream(request: ChatRequest):
                     output = data.get("output", "")
                     yield _sse_event("tool_end", {
                         "tool_name": tool_name,
+                        "node": _active_node,
                         "output": str(output)[:2000],  # 截断过长输出
                     })
 
@@ -483,6 +523,8 @@ async def approve_action(request: ApprovalRequest):
         yield _sse_event("thread_id", {"thread_id": request.thread_id, "is_new": False})
 
         _last_phase_idx = -1
+        # 当前活跃节点（用于给 token/tool 事件附加 node 归属）
+        _active_node = ""
 
         # --- 合并队列：同 /chat 端点，确保 browser_step 实时推送 ---
         _merged_queue: asyncio.Queue = asyncio.Queue()
@@ -542,6 +584,7 @@ async def approve_action(request: ApprovalRequest):
                 if kind == "on_chain_start":
                     chain_name = event.get("name", "")
                     if chain_name in _GRAPH_NODES:
+                        _active_node = chain_name
                         yield _sse_event("node_enter", {"node": chain_name})
                         inp = data.get("input", {})
                         if isinstance(inp, dict):
@@ -569,6 +612,9 @@ async def approve_action(request: ApprovalRequest):
                     print(f"[API-Debug-APPROVE] on_chain_end name='{chain_name}' output={_out_keys}")
                     if chain_name in _GRAPH_NODES:
                         yield _sse_event("node_exit", {"node": chain_name})
+                        # 清除活跃节点标记
+                        if _active_node == chain_name:
+                            _active_node = ""
                         # 同 /chat 端点：对 browser/advisor 等 subagent 节点
                         # 从 on_chain_end 的输出中提取最终 AIMessage 推送给前端
                         if chain_name in _SUBAGENT_NODES:
@@ -585,18 +631,48 @@ async def approve_action(request: ApprovalRequest):
                 if kind == "on_chat_model_stream":
                     chunk = data.get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
-                        yield _sse_event("token", {"content": sanitize_text(chunk.content)})
+                        _text = sanitize_text(ensure_str_content(chunk.content))
+                        if _text:
+                            yield _sse_event("token", {"content": _text, "node": _active_node})
                     if chunk and hasattr(chunk, "additional_kwargs"):
                         reasoning = chunk.additional_kwargs.get("reasoning_content")
                         if reasoning:
-                            yield _sse_event("reasoning", {"content": sanitize_text(reasoning)})
+                            yield _sse_event("reasoning", {"content": sanitize_text(reasoning), "node": _active_node})
 
-                # 工具调用
+                # LLM 调用结束：提取 token 用量
+                elif kind == "on_chat_model_end":
+                    output_msg = data.get("output")
+                    if output_msg and hasattr(output_msg, "usage_metadata") and output_msg.usage_metadata:
+                        _usage = output_msg.usage_metadata
+                        yield _sse_event("token_usage", {
+                            "node": _active_node,
+                            "input_tokens": getattr(_usage, "input_tokens", 0) or 0,
+                            "output_tokens": getattr(_usage, "output_tokens", 0) or 0,
+                        })
+
+                # 工具调用开始（附带参数摘要）
                 elif kind == "on_tool_start":
-                    yield _sse_event("tool_start", {"tool_name": event.get("name", "")})
+                    tool_name = event.get("name", "")
+                    _tool_input = data.get("input", {})
+                    _args_summary = ""
+                    if isinstance(_tool_input, dict):
+                        try:
+                            _args_summary = json.dumps(_tool_input, ensure_ascii=False, default=str)[:500]
+                        except Exception:
+                            _args_summary = str(_tool_input)[:500]
+                    elif isinstance(_tool_input, str):
+                        _args_summary = _tool_input[:500]
+                    yield _sse_event("tool_start", {
+                        "tool_name": tool_name,
+                        "node": _active_node,
+                        "args_summary": _args_summary,
+                    })
+
+                # 工具调用结束
                 elif kind == "on_tool_end":
                     yield _sse_event("tool_end", {
                         "tool_name": event.get("name", ""),
+                        "node": _active_node,
                         "output": str(data.get("output", ""))[:2000],
                     })
 
@@ -711,15 +787,16 @@ async def get_conversation_history(thread_id: str):
             entry = {"id": getattr(msg, "id", ""), "content": ""}
             if isinstance(msg, HumanMessage):
                 entry["role"] = "user"
-                entry["content"] = msg.content if isinstance(msg.content, str) else str(msg.content)
+                # Anthropic 返回 list 格式 content，统一转为 str
+                entry["content"] = ensure_str_content(msg.content)
             elif isinstance(msg, AIMessage):
                 entry["role"] = "ai"
-                entry["content"] = msg.content if isinstance(msg.content, str) else str(msg.content)
+                entry["content"] = ensure_str_content(msg.content)
                 if msg.tool_calls:
                     entry["tool_calls"] = msg.tool_calls
             elif isinstance(msg, ToolMessage):
                 entry["role"] = "tool"
-                entry["content"] = msg.content[:2000] if msg.content else ""
+                entry["content"] = ensure_str_content(msg.content)[:2000] if msg.content else ""
                 entry["tool_name"] = getattr(msg, "name", "")
             else:
                 continue
@@ -908,6 +985,11 @@ async def run_scheduled_task(task_id: int):
 
     graph = await get_graph()
     thread_id = str(uuid.uuid4())
+
+    # 定时任务每次都是新线程，重置提示词缓存读取最新 memory
+    from ..graph import reset_prompt_cache
+    reset_prompt_cache()
+
     await db.create_conversation(thread_id)
 
     graph_config = {
@@ -1171,10 +1253,13 @@ async def _stream_to_websocket(graph, graph_input, graph_config, websocket: WebS
             if kind == "on_chat_model_stream":
                 chunk = data.get("chunk")
                 if chunk and hasattr(chunk, "content") and chunk.content:
-                    await websocket.send_json({
-                        "type": "token",
-                        "content": sanitize_text(chunk.content),
-                    })
+                    # Anthropic 返回 list 格式 content，需先转为 str
+                    _text = sanitize_text(ensure_str_content(chunk.content))
+                    if _text:
+                        await websocket.send_json({
+                            "type": "token",
+                            "content": _text,
+                        })
                 if chunk and hasattr(chunk, "additional_kwargs"):
                     reasoning = chunk.additional_kwargs.get("reasoning_content")
                     if reasoning:
@@ -1504,6 +1589,201 @@ async def delete_skill(name: str):
     raise HTTPException(404, f"技能 '{name}' 不存在")
 
 
+# ==================== 工作流模板 API（data/workflows/） ====================
+# 支持 list / get / create / save / delete
+
+
+@app.get("/workflows")
+async def list_workflows():
+    """
+    列出所有 workflow 模板（data/workflows/*.md）
+
+    返回每个模板的 front matter 元数据 + phases 概要，供前端展示工作流列表。
+    """
+    from ..workflow_loader import discover_workflows
+    summaries = discover_workflows()
+    result = []
+    for s in summaries:
+        result.append({
+            "file_name": s.get("file_name", ""),                # 不带 .md 的文件名（唯一标识）
+            "name": s.get("name", ""),                          # 工作流中文名
+            "domain": s.get("domain", ""),                      # 领域标识
+            "description": s.get("description", ""),            # 简介
+            "keywords": s.get("keywords", []) if isinstance(s.get("keywords"), list) else [],
+            "phase_count": len(s.get("phases", [])),            # phase 数量（前端展示）
+        })
+    return {"workflows": result}
+
+
+@app.get("/workflows/{file_name}")
+async def get_workflow(file_name: str):
+    """
+    获取指定工作流模板的完整文件内容（含 front matter + phases 定义）
+
+    供前端 Monaco 编辑器展示和编辑。
+    """
+    import re as _re
+    from .. import config as _cfg
+
+    # 校验文件名（只允许英文/数字/连字符/下划线）
+    if not _re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', file_name):
+        raise HTTPException(400, "工作流文件名格式不合法")
+
+    md_file = _cfg.WORKFLOWS_DIR / f"{file_name}.md"
+    if not md_file.exists():
+        raise HTTPException(404, f"工作流 '{file_name}' 不存在")
+
+    try:
+        content = md_file.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"读取工作流文件失败: {e}")
+
+    return {
+        "file_name": file_name,
+        "path": str(md_file),
+        "content": content,
+    }
+
+
+class WorkflowUpdateRequest(BaseModel):
+    """工作流模板更新请求"""
+    content: str = Field(..., description="更新后的工作流 md 完整内容")
+
+
+@app.put("/workflows/{file_name}")
+async def update_workflow(file_name: str, request: WorkflowUpdateRequest):
+    """
+    保存工作流模板内容（前端 Monaco 编辑器保存时调用）
+
+    直接覆盖写入 data/workflows/{file_name}.md。
+    """
+    import re as _re
+    from .. import config as _cfg
+
+    if not _re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', file_name):
+        raise HTTPException(400, "工作流文件名格式不合法")
+
+    md_file = _cfg.WORKFLOWS_DIR / f"{file_name}.md"
+    if not md_file.exists():
+        # 不支持创建新工作流，仅能编辑已存在的
+        raise HTTPException(404, f"工作流 '{file_name}' 不存在（仅支持编辑已有工作流）")
+
+    try:
+        md_file.write_text(request.content, encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"保存工作流文件失败: {e}")
+
+    return {"status": "ok", "message": f"工作流 '{file_name}' 已保存", "path": str(md_file)}
+
+
+class WorkflowCreateRequest(BaseModel):
+    """新建工作流请求"""
+    file_name: str = Field(..., description="工作流文件名（不带 .md 后缀，如 my-workflow）")
+    name: str = Field("", description="工作流中文名（可选，留空用 file_name）")
+    domain: str = Field("", description="领域标识（可选）")
+    description: str = Field("", description="简介（可选）")
+    content: str = Field("", description="完整 md 内容（可选，留空则用默认模板）")
+
+
+# 新建工作流默认模板
+_WORKFLOW_TEMPLATE = """---
+name: {name}
+domain: {domain}
+description: {description}
+keywords: []
+version: "1.0"
+---
+
+## Phase 1: Understand
+- description: 明确需求、确认范围、收集背景信息
+- method: agent
+- skill: null
+- required: true
+- review: false
+
+## Phase 2: Execute
+- description: 按方案逐步执行
+- method: executor
+- skill: null
+- required: true
+- review: true
+
+## Phase 3: Deliver
+- description: 整理输出、交付最终成果
+- method: agent
+- skill: null
+- required: true
+- review: false
+"""
+
+
+@app.post("/workflows")
+async def create_workflow(request: WorkflowCreateRequest):
+    """
+    新建工作流模板
+
+    在 data/workflows/ 下创建新的 .md 文件。如未提供 content，使用默认 3 阶段模板。
+    """
+    import re as _re
+    from .. import config as _cfg
+
+    # 校验文件名（只允许英文、数字、连字符、下划线，首字符为字母/数字）
+    if not _re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', request.file_name):
+        raise HTTPException(400, "工作流文件名只能包含英文字母、数字、连字符和下划线，且不能以符号开头")
+
+    md_file = _cfg.WORKFLOWS_DIR / f"{request.file_name}.md"
+    if md_file.exists():
+        raise HTTPException(409, f"工作流 '{request.file_name}' 已存在")
+
+    # 组装内容：优先用请求体中的 content；否则用模板
+    if request.content.strip():
+        content = request.content
+    else:
+        content = _WORKFLOW_TEMPLATE.format(
+            name=request.name or request.file_name,
+            domain=request.domain or request.file_name,
+            description=request.description or "请在此填写工作流描述",
+        )
+
+    try:
+        _cfg.WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
+        md_file.write_text(content, encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(500, f"创建工作流失败: {e}")
+
+    return {
+        "status": "ok",
+        "message": f"工作流 '{request.file_name}' 已创建",
+        "file_name": request.file_name,
+        "path": str(md_file),
+    }
+
+
+@app.delete("/workflows/{file_name}")
+async def delete_workflow(file_name: str):
+    """
+    删除指定工作流模板（物理删除对应 .md 文件）
+
+    不可撤销。
+    """
+    import re as _re
+    from .. import config as _cfg
+
+    if not _re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*$', file_name):
+        raise HTTPException(400, "工作流文件名格式不合法")
+
+    md_file = _cfg.WORKFLOWS_DIR / f"{file_name}.md"
+    if not md_file.exists():
+        raise HTTPException(404, f"工作流 '{file_name}' 不存在")
+
+    try:
+        md_file.unlink()
+    except Exception as e:
+        raise HTTPException(500, f"删除工作流文件失败: {e}")
+
+    return {"status": "ok", "message": f"工作流 '{file_name}' 已删除", "path": str(md_file)}
+
+
 # ==================== 流程图拓扑 API ====================
 
 @app.get("/graph/topology")
@@ -1604,19 +1884,10 @@ def _extract_last_ai_message(output) -> str:
         # 从后往前找最后一条 AIMessage
         for msg in reversed(msgs):
             if isinstance(msg, AIMessage):
-                content = msg.content
-                # content 可能是 str 也可能是 list（多模态）
-                if isinstance(content, str) and content.strip():
+                # 统一提取文本（兼容 Anthropic list content）
+                content = ensure_str_content(msg.content)
+                if content and content.strip():
                     return content
-                if isinstance(content, list):
-                    # 合并所有 text 片段
-                    parts = [
-                        item.get("text", "") if isinstance(item, dict) else str(item)
-                        for item in content
-                    ]
-                    joined = "".join(parts).strip()
-                    if joined:
-                        return joined
     except Exception as e:
         print(f"[API] _extract_last_ai_message 失败: {e}")
     return ""

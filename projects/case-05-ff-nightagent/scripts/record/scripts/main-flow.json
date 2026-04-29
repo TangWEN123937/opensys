@@ -1,0 +1,106 @@
+{
+  "name": "FF-Autopilot 完整演示 · 主页快过 + 新建 Goal 全链路",
+  "baseUrl": "http://localhost:3333",
+  "viewport": { "width": 1440, "height": 900 },
+  "speedup": 2.0,
+  "steps": [
+    { "at": "0:00", "action": "navigate", "url": "/", "settleMs": 1500 },
+
+    {
+      "at": "0:02",
+      "action": "scene",
+      "anchor": "#hero",
+      "framing": "top",
+      "settleMs": 600,
+      "subtitle": "FF-Autopilot 7×24 AI 代理系统",
+      "hold": 9000,
+      "scrollDuration": 800
+    },
+
+    {
+      "at": "0:11",
+      "action": "scene",
+      "anchor": "#preview",
+      "framing": "center",
+      "settleMs": 500,
+      "subtitle": "三栏控制室实时呈现 Agent 思考与调用过程",
+      "hold": 8000
+    },
+
+    {
+      "at": "0:20",
+      "action": "scene",
+      "anchor": "#features",
+      "framing": "top",
+      "settleMs": 500,
+      "subtitle": "六大功能模块覆盖运营全链路",
+      "hold": 6000
+    },
+
+    {
+      "at": "0:27",
+      "action": "scene",
+      "anchor": "#how",
+      "framing": "center",
+      "settleMs": 500,
+      "subtitle": "目标驱动 · 自动执行 · 人工审批 三段架构",
+      "hold": 8000
+    },
+
+    { "at": "0:36", "action": "wait", "ms": 1000 },
+    { "at": "0:37", "action": "click", "selector": "a[href='/dashboard']" },
+    { "at": "0:51", "action": "wait", "ms": 2000 },
+    { "at": "0:53", "action": "subtitle", "text": "工作台支持多 Goal 并行托管运行", "hold": 6000 },
+    { "at": "0:59", "action": "wait", "ms": 1500 },
+
+    { "at": "1:01", "action": "click", "selector": "a[href='/goals/new']" },
+    { "at": "1:03", "action": "wait", "ms": 2000 },
+    { "at": "1:05", "action": "subtitle", "text": "自然语言描述 30 天运营 KPI", "hold": 6000 },
+    { "at": "1:11", "action": "click", "selector": "[data-testid='goal-text']" },
+    { "at": "1:12", "action": "type", "selector": "[data-testid='goal-text']", "text": "30 天小红书涨粉 500 + 私信转化 5 单", "speed": 80 },
+    { "at": "1:24", "action": "subtitle", "text": "时间压缩 0.5×~4× 加速观察执行", "hold": 6000 },
+    { "at": "1:30", "action": "moveTo", "selector": "button:has-text('2x')", "steps": 30 },
+    { "at": "1:31", "action": "click", "selector": "button:has-text('2x')" },
+
+    { "at": "1:33", "action": "subtitle", "text": "Claude 4.7 自动拆解 KPI 计划", "hold": 7000 },
+    { "at": "1:35", "action": "click", "selector": "[data-testid='btn-submit-goal']" },
+    { "at": "1:37", "action": "subtitle", "text": "深度推理过程实时呈现 · 3-8 秒生成", "hold": 7000 },
+    { "at": "1:44", "action": "waitFor", "selector": "[data-testid='btn-enter-live']", "timeout": 30000 },
+    { "at": "1:48", "action": "subtitle", "text": "自动生成 5-7 节点可执行行动计划", "hold": 7000 },
+    { "at": "1:55", "action": "wait", "ms": 2000 },
+
+    { "at": "1:57", "action": "subtitle", "text": "一键启动 7×24 自动托管循环", "hold": 6000 },
+    { "at": "2:03", "action": "click", "selector": "[data-testid='btn-enter-live']" },
+    { "at": "2:05", "action": "wait", "ms": 2500 },
+
+    { "at": "2:07", "action": "subtitle", "text": "实时事件流呈现思考与工具调用", "hold": 7000 },
+    { "at": "2:14", "action": "wait", "ms": 4000 },
+    { "at": "2:18", "action": "subtitle", "text": "自动调用浏览器工具抓取竞品数据", "hold": 7000 },
+    { "at": "2:25", "action": "wait", "ms": 4000 },
+    { "at": "2:29", "action": "subtitle", "text": "多模态生成主视觉 · 自动入审批队列", "hold": 7000 },
+    { "at": "2:36", "action": "wait", "ms": 3000 },
+
+    { "at": "2:39", "action": "subtitle", "text": "高风险动作自动暂停 · 等待人工接管", "hold": 7000 },
+    { "at": "2:46", "action": "navigate", "url": "/approvals", "settleMs": 1500 },
+    { "at": "2:48", "action": "subtitle", "text": "审批收件箱集中处理 · 通过/修改/驳回", "hold": 7000 },
+    { "at": "2:55", "action": "wait", "ms": 2500 },
+    { "at": "2:58", "action": "subtitle", "text": "笔记草稿自带命中度 + 品牌语气评分", "hold": 7000 },
+    { "at": "3:05", "action": "wait", "ms": 2500 },
+    { "at": "3:08", "action": "moveTo", "selector": "[data-testid='btn-approve']", "steps": 35 },
+    { "at": "3:10", "action": "click", "selector": "[data-testid='btn-approve']" },
+    { "at": "3:11", "action": "subtitle", "text": "审批通过后自动发布到小红书", "hold": 6000 },
+    { "at": "3:17", "action": "waitFor", "selector": "[data-testid='approval-success']", "timeout": 5000 },
+    { "at": "3:18", "action": "wait", "ms": 2500 },
+
+    { "at": "3:20", "action": "subtitle", "text": "全周期事件回放 · 30 天浓缩可视化", "hold": 7000 },
+    { "at": "3:27", "action": "navigate", "url": "/goals/growth-plan-q2/timeline", "settleMs": 1500 },
+    { "at": "3:30", "action": "subtitle", "text": "每个决策与工具调用全程可追溯", "hold": 6000 },
+    { "at": "3:36", "action": "wait", "ms": 2500 },
+    { "at": "3:39", "action": "subtitle", "text": "点击事件节点跳转任意时刻状态", "hold": 6000 },
+    { "at": "3:45", "action": "wait", "ms": 4000 },
+
+    { "at": "3:49", "action": "navigate", "url": "/", "settleMs": 1500 },
+    { "at": "3:51", "action": "subtitle", "text": "FF-Autopilot 7×24 AI 代理系统", "hold": 10000 },
+    { "at": "4:01", "action": "wait", "ms": 1500 }
+  ]
+}

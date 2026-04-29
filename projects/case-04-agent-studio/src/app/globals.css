@@ -1,0 +1,105 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  /* 底层 */
+  --color-bg: hsl(30 20% 99%);
+  --color-surface: hsl(0 0% 100%);
+  --color-elevated: hsl(210 20% 98%);
+
+  /* 文字 */
+  --color-ink: hsl(222 25% 12%);
+  --color-ink-soft: hsl(222 14% 35%);
+  --color-ink-mute: hsl(222 10% 55%);
+  --color-ink-disabled: hsl(222 8% 72%);
+
+  /* 边界 */
+  --color-border: hsl(222 14% 90%);
+  --color-border-subtle: hsl(222 14% 94%);
+
+  /* 主色 · 深海军蓝 */
+  --color-primary: hsl(222 60% 22%);
+  --color-primary-hover: hsl(222 60% 18%);
+  --color-primary-foreground: hsl(0 0% 100%);
+  --color-primary-tint: hsl(222 60% 96%);
+
+  /* 琥珀强调 */
+  --color-accent: hsl(38 92% 50%);
+  --color-accent-tint: hsl(38 92% 95%);
+
+  /* 语义 */
+  --color-success: hsl(145 55% 38%);
+  --color-success-tint: hsl(145 55% 95%);
+  --color-warning: hsl(38 92% 48%);
+  --color-warning-tint: hsl(38 92% 95%);
+  --color-danger: hsl(0 72% 48%);
+  --color-danger-tint: hsl(0 72% 96%);
+  --color-info: hsl(210 75% 45%);
+  --color-info-tint: hsl(210 75% 95%);
+
+  /* 模块色 */
+  --color-tool: hsl(185 65% 42%);
+  --color-skill: hsl(320 50% 48%);
+  --color-mcp: hsl(155 50% 38%);
+  --color-model: hsl(38 85% 48%);
+  --color-trace: hsl(210 70% 48%);
+  --color-memory: hsl(25 75% 48%);
+  --color-eval: hsl(280 40% 50%);
+  --color-agent: hsl(222 60% 40%);
+
+  /* 字体 */
+  --font-sans: "Inter", "PingFang SC", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code, pre, .mono {
+  font-family: var(--font-mono);
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(222 14% 88%); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(222 14% 80%); }
+
+/* 运行中脉冲 */
+@keyframes pulse-ring {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.6); opacity: 0; }
+}
+.pulse-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* 连线流光 */
+@keyframes flow {
+  to { stroke-dashoffset: -16; }
+}
+.flow-line {
+  stroke-dasharray: 4 4;
+  animation: flow 1.2s linear infinite;
+}
+
+/* 轻微 ripple · hover 按钮 */
+.ripple {
+  position: relative;
+  overflow: hidden;
+}

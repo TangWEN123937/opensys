@@ -1,0 +1,505 @@
+{
+    "title": "2026/4/25 19:19:35 录制的内容",
+    "steps": [
+        {
+            "type": "setViewport",
+            "width": 1396,
+            "height": 919,
+            "deviceScaleFactor": 1,
+            "isMobile": false,
+            "hasTouch": false,
+            "isLandscape": false
+        },
+        {
+            "type": "navigate",
+            "url": "https://www.doubao.com/chat/?channel=bing_sem&source=dbweb_sem_xhs_pinp_hexin_hexin_hexin_ocpc_zhuc_4&ad_platform_id=Microsoft_NoClick&ug_semver=&aid=188283372&cid=253746379&keywordid=77241224273465&Campaign=%E7%BD%91%E9%A1%B5%E7%89%88-%E5%93%81%E7%89%8C%E8%AF%8D-%E5%AF%B9%E6%AF%94%E8%AF%8D-TCPA&AdGroup=%E5%93%81%E7%89%8C%E8%AF%8D-%E5%AF%B9%E6%AF%94%E8%AF%8D-TCPA&CampaignId=487327752&AdGroupId=1235852389624378&MatchType=e&AdId=77240918068316&keyword=%E8%B1%86%E5%8C%85&msclkid=2d1f27d1ac7a111d8bd34e3d0f76afd1&BidMatchType=be",
+            "assertedEvents": [
+                {
+                    "type": "navigation",
+                    "url": "https://www.doubao.com/chat/?channel=bing_sem&source=dbweb_sem_xhs_pinp_hexin_hexin_hexin_ocpc_zhuc_4&ad_platform_id=Microsoft_NoClick&ug_semver=&aid=188283372&cid=253746379&keywordid=77241224273465&Campaign=%E7%BD%91%E9%A1%B5%E7%89%88-%E5%93%81%E7%89%8C%E8%AF%8D-%E5%AF%B9%E6%AF%94%E8%AF%8D-TCPA&AdGroup=%E5%93%81%E7%89%8C%E8%AF%8D-%E5%AF%B9%E6%AF%94%E8%AF%8D-TCPA&CampaignId=487327752&AdGroupId=1235852389624378&MatchType=e&AdId=77240918068316&keyword=%E8%B1%86%E5%8C%85&msclkid=2d1f27d1ac7a111d8bd34e3d0f76afd1&BidMatchType=be",
+                    "title": "豆包 - 字节跳动旗下 AI 智能助手"
+                }
+            ]
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "aria/登录",
+                    "aria/[role=\"generic\"]"
+                ],
+                [
+                    "div.justify-end > button > span"
+                ],
+                [
+                    "xpath///*[@id=\"chat-route-main\"]/main/div/div[1]/div[3]/button/span"
+                ],
+                [
+                    "pierce/div.justify-end > button > span"
+                ],
+                [
+                    "text/登录"
+                ]
+            ],
+            "offsetY": 3.5,
+            "offsetX": 9.5
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "aria/请输入手机号"
+                ],
+                [
+                    "div.semi-portal input"
+                ],
+                [
+                    "xpath///*[@id=\"semi-modal-body\"]/div/div/div/div[2]/div[1]/div[2]/div[1]/div/div[2]/input"
+                ],
+                [
+                    "pierce/div.semi-portal input"
+                ]
+            ],
+            "offsetY": 38.5,
+            "offsetX": 143.5
+        },
+        {
+            "type": "change",
+            "value": "17316701896",
+            "selectors": [
+                [
+                    "aria/请输入手机号"
+                ],
+                [
+                    "div.semi-portal input"
+                ],
+                [
+                    "xpath///*[@id=\"semi-modal-body\"]/div/div/div/div[2]/div[1]/div[2]/div[1]/div/div[2]/input"
+                ],
+                [
+                    "pierce/div.semi-portal input"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "aria/已阅读并同意 用户协议、隐私政策、豆包账号服务须知",
+                    "aria/[role=\"generic\"]"
+                ],
+                [
+                    "label > div div"
+                ],
+                [
+                    "xpath///*[@id=\"semi-modal-body\"]/div/div/div/div[2]/div[1]/div[2]/div[2]/div[1]/label/div/button/div"
+                ],
+                [
+                    "pierce/label > div div"
+                ]
+            ],
+            "offsetY": 11.5,
+            "offsetX": 21.15625
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "aria/下一步"
+                ],
+                [
+                    "div.semi-portal div.w-full > button"
+                ],
+                [
+                    "xpath///*[@id=\"semi-modal-body\"]/div/div/div/div[2]/div[1]/div[2]/div[1]/button"
+                ],
+                [
+                    "pierce/div.semi-portal div.w-full > button"
+                ]
+            ],
+            "offsetY": 29.5,
+            "offsetX": 102.5
+        },
+        {
+            "type": "change",
+            "value": "196878",
+            "selectors": [
+                [
+                    "aria/[role=\"dialog\"]",
+                    "aria/[role=\"textbox\"]"
+                ],
+                [
+                    "div.semi-portal input"
+                ],
+                [
+                    "xpath///*[@id=\"semi-modal-body\"]/div/div/div[2]/div[3]/div[1]/div[7]/input"
+                ],
+                [
+                    "pierce/div.semi-portal input"
+                ]
+            ],
+            "target": "main",
+            "assertedEvents": [
+                {
+                    "type": "navigation",
+                    "url": "https://www.doubao.com/chat/?channel=bing_sem&from_login=1",
+                    "title": ""
+                }
+            ]
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "#flow_chat_sidebar > div:nth-of-type(2) > div > div > div"
+                ],
+                [
+                    "xpath///*[@id=\"flow_chat_sidebar\"]/div[2]/div/div/div"
+                ],
+                [
+                    "pierce/#flow_chat_sidebar > div:nth-of-type(2) > div > div > div"
+                ],
+                [
+                    "text/新对话Ctrl K"
+                ]
+            ],
+            "offsetY": 16,
+            "offsetX": 80
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "main div.shrink-0 > div > div.flex > div button:nth-of-type(1) > div > div"
+                ],
+                [
+                    "xpath///*[@id=\"input-engine-container\"]/div/div[2]/div[1]/div[1]/div/div[3]/div/div/button[1]/div/div"
+                ],
+                [
+                    "pierce/main div.shrink-0 > div > div.flex > div button:nth-of-type(1) > div > div"
+                ],
+                [
+                    "text/图像生成"
+                ]
+            ],
+            "offsetY": 0,
+            "offsetX": 9
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div > div"
+                ],
+                [
+                    "xpath///*[@id=\"input-engine-container\"]/div[2]/div[2]/div[2]/div/div/div/div/div"
+                ],
+                [
+                    "pierce/div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div > div"
+                ]
+            ],
+            "offsetY": 15,
+            "offsetX": 194
+        },
+        {
+            "type": "keyDown",
+            "target": "main",
+            "key": "b"
+        },
+        {
+            "type": "keyUp",
+            "key": "b",
+            "target": "main"
+        },
+        {
+            "type": "change",
+            "value": "bango",
+            "selectors": [
+                [
+                    "aria/[role=\"main\"]",
+                    "aria/[role=\"textbox\"]"
+                ],
+                [
+                    "div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ],
+                [
+                    "xpath///*[@id=\"input-engine-container\"]/div[2]/div[2]/div[2]/div/div/div/div"
+                ],
+                [
+                    "pierce/div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "keyDown",
+            "target": "main",
+            "key": "Backspace"
+        },
+        {
+            "type": "keyUp",
+            "key": "Backspace",
+            "target": "main"
+        },
+        {
+            "type": "keyDown",
+            "target": "main",
+            "key": "Backspace"
+        },
+        {
+            "type": "keyUp",
+            "key": "Backspace",
+            "target": "main"
+        },
+        {
+            "type": "keyDown",
+            "target": "main",
+            "key": "Backspace"
+        },
+        {
+            "type": "keyUp",
+            "key": "Backspace",
+            "target": "main"
+        },
+        {
+            "type": "keyDown",
+            "target": "main",
+            "key": "Backspace"
+        },
+        {
+            "type": "keyUp",
+            "key": "Backspace",
+            "target": "main"
+        },
+        {
+            "type": "keyDown",
+            "target": "main",
+            "key": "Backspace"
+        },
+        {
+            "type": "keyUp",
+            "key": "Backspace",
+            "target": "main"
+        },
+        {
+            "type": "keyDown",
+            "target": "main",
+            "key": "Shift"
+        },
+        {
+            "type": "keyUp",
+            "key": "Shift",
+            "target": "main"
+        },
+        {
+            "type": "change",
+            "value": "﻿ban",
+            "selectors": [
+                [
+                    "aria/[role=\"main\"]",
+                    "aria/[role=\"textbox\"]"
+                ],
+                [
+                    "div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ],
+                [
+                    "xpath///*[@id=\"input-engine-container\"]/div[2]/div[2]/div[2]/div/div/div/div"
+                ],
+                [
+                    "pierce/div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "keyUp",
+            "key": "Process",
+            "target": "main"
+        },
+        {
+            "type": "keyUp",
+            "key": "n",
+            "target": "main"
+        },
+        {
+            "type": "change",
+            "value": "帮我sheng'c",
+            "selectors": [
+                [
+                    "aria/[role=\"main\"]",
+                    "aria/[role=\"textbox\"]"
+                ],
+                [
+                    "div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ],
+                [
+                    "xpath///*[@id=\"input-engine-container\"]/div[2]/div[2]/div[2]/div/div/div/div"
+                ],
+                [
+                    "pierce/div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "keyUp",
+            "key": "Process",
+            "target": "main"
+        },
+        {
+            "type": "keyUp",
+            "key": "c",
+            "target": "main"
+        },
+        {
+            "type": "change",
+            "value": "帮我生成一个ping'guo'sh",
+            "selectors": [
+                [
+                    "aria/[role=\"main\"]",
+                    "aria/[role=\"textbox\"]"
+                ],
+                [
+                    "div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ],
+                [
+                    "xpath///*[@id=\"input-engine-container\"]/div[2]/div[2]/div[2]/div/div/div/div"
+                ],
+                [
+                    "pierce/div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "keyUp",
+            "key": "Process",
+            "target": "main"
+        },
+        {
+            "type": "keyUp",
+            "key": "h",
+            "target": "main"
+        },
+        {
+            "type": "change",
+            "value": "帮我生成一个苹果树",
+            "selectors": [
+                [
+                    "aria/[role=\"main\"]",
+                    "aria/[role=\"textbox\"]"
+                ],
+                [
+                    "div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ],
+                [
+                    "xpath///*[@id=\"input-engine-container\"]/div[2]/div[2]/div[2]/div/div/div/div"
+                ],
+                [
+                    "pierce/div.min-h-\\(--input-guidance-input-editor-wrapper-min-height\\,0\\) > div > div > div > div"
+                ]
+            ],
+            "target": "main"
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "div.flex > div.relative > div.items-end div.shrink-0 svg"
+                ],
+                [
+                    "xpath///*[@id=\"flow-end-msg-send\"]/div/svg"
+                ],
+                [
+                    "pierce/div.flex > div.relative > div.items-end div.shrink-0 svg"
+                ]
+            ],
+            "offsetY": 3,
+            "offsetX": 12
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "div.relative > div > div.flex > div > div > div:nth-of-type(1) picture > img"
+                ],
+                [
+                    "xpath///*[@id=\"chat-route-main\"]/main/div/div[2]/div/div[1]/div/div[1]/div/div/div[2]/div[2]/div/div/div/div/div/div/div/div[1]/div/div[2]/div/div/div[1]/div/div[1]/div/span/span/picture/img"
+                ],
+                [
+                    "pierce/div.relative > div > div.flex > div > div > div:nth-of-type(1) picture > img"
+                ]
+            ],
+            "offsetY": 234,
+            "offsetX": 328.5
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "aside div:nth-of-type(5) span"
+                ],
+                [
+                    "xpath///*[@id=\"chat-route-layout\"]/aside/div/div[2]/div/div[1]/div/div[1]/div[2]/div/div/div/div/div/div/div[2]/div/div[5]/div/div/span"
+                ],
+                [
+                    "pierce/aside div:nth-of-type(5) span"
+                ],
+                [
+                    "text/变清晰"
+                ]
+            ],
+            "offsetY": 10.5,
+            "offsetX": 22
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "div.inter-H_fm37 > div:nth-of-type(4) picture > img"
+                ],
+                [
+                    "xpath///*[@id=\"chat-route-main\"]/main/div/div[2]/div/div[1]/div/div[1]/div/div/div[2]/div[4]/div/div/div/div/div/div/div/div[1]/div/div/div/div/div[1]/div/span/span/picture/img"
+                ],
+                [
+                    "pierce/div.inter-H_fm37 > div:nth-of-type(4) picture > img"
+                ]
+            ],
+            "offsetY": 87.5,
+            "offsetX": 327.5
+        },
+        {
+            "type": "click",
+            "target": "main",
+            "selectors": [
+                [
+                    "aria/保存",
+                    "aria/[role=\"image\"]"
+                ],
+                [
+                    "div.container-Qw3qhD button > svg"
+                ],
+                [
+                    "xpath///*[@id=\"chat-route-layout\"]/aside/div/div[2]/div/div[1]/div/div[1]/div[2]/div/div/div/div/div/div/button/svg"
+                ],
+                [
+                    "pierce/div.container-Qw3qhD button > svg"
+                ]
+            ],
+            "offsetY": 7.5,
+            "offsetX": 8
+        }
+    ]
+}

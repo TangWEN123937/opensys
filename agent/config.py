@@ -33,34 +33,74 @@ MEMORY_MAX_CHARS = int(os.getenv("OPENSYS_MEMORY_MAX_CHARS", "3000"))
 # 用户自定义提示词文件（追加到 system prompt，AI 不可修改，用户可编辑）
 USER_PROMPT_FILE = DATA_DIR / "user_prompt.md"
 
+# 任务输出根目录（每次 pipeline 在此下创建独立子目录）
+OUTPUT_DIR = Path(os.getenv("OPENSYS_OUTPUT_DIR", PROJECT_ROOT / "output"))
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 # 审计日志目录
 LOG_DIR = DATA_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def get_task_dir(task_name: str = "") -> Path:
+    """
+    为一次 pipeline 任务创建独立的输出目录
+
+    目录结构：output/YYYYMMDD_HHMM_标题摘要/
+      ├── output/      # 终稿交付物（论文终稿、最终文章等）
+      ├── drafts/      # 过程草稿和中间文件（分章节草稿、调研笔记等）
+      └── downloads/   # 浏览器下载的文件（PDF 等）
+
+    Args:
+        task_name: 任务标题摘要（自动截取前 20 字符，清理非法字符）
+
+    Returns:
+        任务根目录 Path
+    """
+    import re
+    from datetime import datetime
+
+    # 时间戳前缀
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+
+    # 清理标题：去掉路径非法字符，截取前 20 字符
+    clean_name = re.sub(r'[\\/:*?"<>|\s]+', '_', task_name).strip('_')[:20]
+    if clean_name:
+        dir_name = f"{ts}_{clean_name}"
+    else:
+        dir_name = ts
+
+    task_dir = OUTPUT_DIR / dir_name
+    # 创建子目录
+    (task_dir / "output").mkdir(parents=True, exist_ok=True)      # 终稿交付物
+    (task_dir / "drafts").mkdir(parents=True, exist_ok=True)      # 过程草稿和中间文件
+    (task_dir / "downloads").mkdir(parents=True, exist_ok=True)   # 浏览器下载的文件
+    return task_dir
+
 # ==================== 模型配置 ====================
 
 # 默认模型名称（必须是 MODEL_PRESETS 中的 key）
-DEFAULT_MODEL_NAME = os.getenv("OPENSYS_MODEL_NAME", "deepseek-chat")
+DEFAULT_MODEL_NAME = os.getenv("OPENSYS_MODEL_NAME", "deepseek-v4-flash")
 
 # 按 model_name 预设完整配置（参考 AI_JOIN AgentConfigManager.PRESET_CONFIGS）
 # 每个模型名对应：provider、api_key、api_base、thinking_model、isvision
 # 同一 provider 下不同模型可能有不同的 api_base 和特性
 MODEL_PRESETS = {
     # --- DeepSeek ---
-    "deepseek-chat": {
-        "model_name": "deepseek-chat",
+    "deepseek-v4-flash": {
+        "model_name": "deepseek-v4-flash",
         "model_provider": "deepseek",
         "api_key": os.getenv("OPENSYS_DEEPSEEK_API_KEY", ""),
         "api_base": os.getenv("OPENSYS_DEEPSEEK_API_BASE", ""),
-        "thinking_model": None,
+        "thinking_model": True,  # 推理模式，使用自定义 DeepSeekReasonerChatModel
         "isvision": None,
     },
-    "deepseek-reasoner": {
-        "model_name": "deepseek-reasoner",
+    "deepseek-v4-pro": {
+        "model_name": "deepseek-v4-pro",
         "model_provider": "deepseek",
         "api_key": os.getenv("OPENSYS_DEEPSEEK_API_KEY", ""),
         "api_base": os.getenv("OPENSYS_DEEPSEEK_API_BASE", "https://api.deepseek.com"),
-        "thinking_model": None,  # reasoner 模型默认开启思考
+        "thinking_model": True,  # 推理模式，使用自定义 DeepSeekReasonerChatModel
         "isvision": None,
     },
 
@@ -91,6 +131,7 @@ MODEL_PRESETS = {
         "thinking_model": True,  # 思考版本
         "isvision": True,
     },
+
     "qwen3-coder-plus": {
         "model_name": "qwen3-coder-plus",
         "model_provider": "qwen",
@@ -100,19 +141,30 @@ MODEL_PRESETS = {
         "isvision": False,
     },
 
-    # --- Claude (Anthropic) ---
-    "claude-sonnet-4-6": {
-        "model_name": "claude-sonnet-4-6",
+    # --- openAI ---
+    "gpt-5.5": {
+        "model_name": "gpt-5.5",
+        "model_provider": "openai",
+        "api_key": os.getenv("OPENSYS_OPENAI_API_KEY", ""),
+        "api_base": os.getenv("OPENSYS_OPENAI_API_BASE", "https://api.openai.com/v1"),
+        "thinking_model": None,
+        "isvision": True,
+    },
+    # --- Claude (Anthropic，通过 WindsurfAPI 代理) ---
+    # base_url 应为代理根地址（如 http://127.0.0.1:3003），SDK 会自动拼接 /v1/messages
+    "claude-opus-4.6": {
+        "model_name": "claude-opus-4.6",          # 代理端注册的模型名（带点号）
         "model_provider": "anthropic",
         "api_key": os.getenv("OPENSYS_ANTHROPIC_API_KEY", ""),
         "api_base": os.getenv("OPENSYS_ANTHROPIC_API_BASE", ""),
         "thinking_model": None,
         "isvision": True,
     },
-    "claude-haiku-4-5": {
-        "model_name": "claude-haiku-4-5",
+    "claude-opus-4-7-medium": {
+        "model_name": "claude-opus-4-7-medium",            # 代理端注册的模型名（带点号）
         "model_provider": "anthropic",
-        "api_key": os.getenv("OPENSYS_ANTHROPIC_API_KEY", ""),
+        # "api_key": os.getenv("OPENSYS_ANTHROPIC_API_KEY", ""),
+        "api_key": "devin-session-token$eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uX2lkIjoid2luZHN1cmYtc2Vzc2lvbi05MWQ0OTY4YmM2ZTQ0NzE1YTc1NTg2YzJlMmZhNWQwYiJ9.bKhtppMof6SUo3D0EJ23ym0MzqpFNvFhTEtYstrwNVY",
         "api_base": os.getenv("OPENSYS_ANTHROPIC_API_BASE", ""),
         "thinking_model": None,
         "isvision": True,
@@ -247,9 +299,9 @@ WS_HEARTBEAT_INTERVAL = int(os.getenv("OPENSYS_WS_HEARTBEAT", "30"))  # 秒
 # ==================== 上下文压缩配置 ====================
 
 # 消息数量触发阈值
-COMPRESS_TRIGGER_MESSAGES = int(os.getenv("OPENSYS_COMPRESS_MSG_TRIGGER", "60"))
+COMPRESS_TRIGGER_MESSAGES = int(os.getenv("OPENSYS_COMPRESS_MSG_TRIGGER", "90"))
 # Token 数量触发阈值
-COMPRESS_TRIGGER_TOKENS = int(os.getenv("OPENSYS_COMPRESS_TOKEN_TRIGGER", "15000"))
+COMPRESS_TRIGGER_TOKENS = int(os.getenv("OPENSYS_COMPRESS_TOKEN_TRIGGER", "20000"))
 # 压缩后保留的消息数量
 COMPRESS_KEEP_MESSAGES = int(os.getenv("OPENSYS_COMPRESS_KEEP_MSG", "30"))
 
@@ -261,18 +313,39 @@ CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
 
 # ChromaDB 集合名称
 CHROMA_COLLECTION_CONVERSATIONS = "conversation_memory"  # 对话记忆集合
-CHROMA_COLLECTION_SKILLS = "skill_knowledge"              # 技能知识集合（P3 新增）
+CHROMA_COLLECTION_DOCUMENTS = "documents"                 # 文档知识库集合（PDF 向量化入库）
 
-# 技能向量检索 top-k（Advisor 无模板时使用）
-SKILL_VECTOR_TOP_K = int(os.getenv("OPENSYS_SKILL_VECTOR_TOP_K", "5"))
+# ==================== PDF 向量化配置 ====================
+
+# OCR 解析后的 Markdown 文档存储目录（按 topic 子目录分类）
+DOCUMENTS_DIR = DATA_DIR / "documents"
+DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# SiliconFlow PaddleOCR-VL 配置（免费，OpenAI 兼容格式，直接解析 PDF → Markdown）
+# 模型限速：RPM 1000 / TPM 80000
+OCR_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
+OCR_API_BASE = os.getenv("SILICONFLOW_API_BASE", "https://api.siliconflow.cn/v1")
+OCR_MODEL = os.getenv("SILICONFLOW_OCR_MODEL", "PaddlePaddle/PaddleOCR-VL-1.5")
+# 单次 OCR 请求超时（秒），大 PDF 可能需要较长时间
+OCR_TIMEOUT = int(os.getenv("SILICONFLOW_OCR_TIMEOUT", "120"))
+
+# LLM 自动分类使用的模型（Tier 2，topic 分类不需要强模型）
+PDF_CLASSIFY_MODEL = os.getenv("OPENSYS_PDF_CLASSIFY_MODEL", "deepseek-v4-flash")
+
+# Markdown chunk 切分参数
+PDF_CHUNK_MAX_CHARS = int(os.getenv("OPENSYS_PDF_CHUNK_MAX_CHARS", "1500"))       # 单个 chunk 最大字符数
+PDF_CHUNK_OVERLAP_CHARS = int(os.getenv("OPENSYS_PDF_CHUNK_OVERLAP_CHARS", "150")) # 相邻 chunk 重叠字符数
+
+# 文档向量检索 top-k
+DOCUMENTS_SEARCH_TOP_K = int(os.getenv("OPENSYS_DOCUMENTS_TOP_K", "10"))
 
 # 本地 Embedding 服务配置（BGE-M3）
-EMBEDDING_API_URL = os.getenv("OPENSYS_EMBEDDING_URL", "http://localhost:8100/api/v1/embed")
-EMBEDDING_MODEL_NAME = os.getenv("OPENSYS_EMBEDDING_MODEL", "bge-code-v1")
+EMBEDDING_API_URL = os.getenv("OPENSYS_EMBEDDING_URL", "http://host.docker.internal:8100/api/v1/embed")
+EMBEDDING_MODEL_NAME = os.getenv("OPENSYS_EMBEDDING_MODEL", "BAAI/bge-m3")
 
 # 对话记忆向量化配置
-VECTOR_TRIGGER_MESSAGES = int(os.getenv("OPENSYS_VECTOR_MSG_TRIGGER", "60"))    # 触发入库的消息数阈值
-VECTOR_TRIGGER_TOKENS = int(os.getenv("OPENSYS_VECTOR_TOKEN_TRIGGER", "15000")) # 触发入库的 token 阈值
+VECTOR_TRIGGER_MESSAGES = int(os.getenv("OPENSYS_VECTOR_MSG_TRIGGER", "90"))    # 触发入库的消息数阈值
+VECTOR_TRIGGER_TOKENS = int(os.getenv("OPENSYS_VECTOR_TOKEN_TRIGGER", "20000")) # 触发入库的 token 阈值
 VECTOR_KEEP_MESSAGES = int(os.getenv("OPENSYS_VECTOR_KEEP_MSG", "30"))          # 入库后保留的最近消息数
 VECTOR_SEARCH_TOP_K = int(os.getenv("OPENSYS_VECTOR_TOP_K", "5"))              # 检索返回的 top-k 数量
 
@@ -325,13 +398,13 @@ UNATTENDED_TIMEOUT_SECONDS = int(os.getenv("OPENSYS_UNATTENDED_TIMEOUT", "900"))
 UNATTENDED_MAX_AUTO_INTERRUPTS = int(os.getenv("OPENSYS_UNATTENDED_MAX_INTERRUPTS", "10"))
 
 # Executor 使用的小模型（Tier 2，执行类任务用便宜快速的模型）
-EXECUTOR_MODEL_NAME = os.getenv("OPENSYS_EXECUTOR_MODEL", "deepseek-chat")
+EXECUTOR_MODEL_NAME = os.getenv("OPENSYS_EXECUTOR_MODEL", "deepseek-v4-flash")
 
 # Dispatcher 使用的模型（Tier 2，子任务拆分）
-DISPATCHER_MODEL_NAME = os.getenv("OPENSYS_DISPATCHER_MODEL", "deepseek-chat")
+DISPATCHER_MODEL_NAME = os.getenv("OPENSYS_DISPATCHER_MODEL", "deepseek-v4-flash")
 
 # Reviewer 使用的模型（Tier 2，质量审查）
-REVIEWER_MODEL_NAME = os.getenv("OPENSYS_REVIEWER_MODEL", "deepseek-chat")
+REVIEWER_MODEL_NAME = os.getenv("OPENSYS_REVIEWER_MODEL", "deepseek-v4-flash")
 
 # 最强模型名称（Tier 1，用于 Advisor 规划等高复杂度场景）
 COMPLEX_MODEL_NAME = os.getenv("OPENSYS_COMPLEX_MODEL", "claude-sonnet-4-6")

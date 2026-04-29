@@ -1,17 +1,19 @@
 /**
- * OpenSys 可视化调试前端 - 主页面
+ * OpenSys AI 团队办公室 - 主页面
  *
- * 三区布局：
- * - 左侧：聊天消息区
- * - 右上：执行流程图
- * - 右下：技能标签区
+ * 三栏布局：
+ * - 左侧（35%）：聊天面板
+ * - 中间（45%）：团队办公室（卡片墙 / 流程图双视图）+ 全局统计栏 + 技能面板
+ * - 右侧（20%）：全员事件流 Timeline
  * - 浮层：浏览器实时画面（browser 节点执行时自动弹出）
  */
 
 import { useState, useEffect } from 'react'
 import { useChatStream } from './hooks/useChatStream'
 import ChatPanel from './components/ChatPanel'
-import FlowGraph from './components/FlowGraph'
+import TeamOffice from './components/TeamOffice'
+import GlobalStats from './components/GlobalStats'
+import EventStream from './components/EventStream'
 import SkillPanel from './components/SkillPanel'
 import BrowserViewer from './components/BrowserViewer'
 
@@ -25,6 +27,10 @@ function App() {
     loadedSkills,
     error,
     approvalRequest,
+    // 团队办公室状态
+    memberStates,
+    eventFeed,
+    globalAggregates,
     sendMessage,
     resumeAfterApproval,
     abort,
@@ -52,7 +58,6 @@ function App() {
   }, [browserActive, browserDismissed])
 
   // 对话结束时自动关闭浏览器弹窗（避免残留空画面）
-  // isStreaming 从 true → false 且 browser 节点也不 active，说明整轮执行结束
   useEffect(() => {
     if (!isStreaming && !browserActive) {
       setBrowserVisible(false)
@@ -77,8 +82,8 @@ function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-      {/* 左侧：聊天面板（占 50% 宽度） */}
-      <div className="w-1/2 min-w-[400px] border-r border-[var(--color-border)]">
+      {/* 左栏：聊天面板（35%） */}
+      <div className="w-[35%] min-w-[360px] border-r border-[var(--color-border)]">
         <ChatPanel
           messages={messages}
           isStreaming={isStreaming}
@@ -93,17 +98,34 @@ function App() {
         />
       </div>
 
-      {/* 右侧：上下分栏 */}
-      <div className="flex-1 flex flex-col min-w-[400px]">
-        {/* 右上：流程图（占 60% 高度） */}
-        <div className="h-[60%] border-b border-[var(--color-border)]">
-          <FlowGraph nodeStates={nodeStates} phaseInfo={phaseInfo} />
+      {/* 中栏：团队办公室（45%） */}
+      <div className="flex-1 flex flex-col min-w-[400px] border-r border-[var(--color-border)]">
+        {/* 全局统计栏 */}
+        <GlobalStats
+          aggregates={globalAggregates}
+          phaseInfo={phaseInfo}
+          isStreaming={isStreaming}
+        />
+
+        {/* 办公室主视图（卡片墙 / 流程图）占 65% 高度 */}
+        <div className="h-[65%] border-b border-[var(--color-border)]">
+          <TeamOffice
+            memberStates={memberStates}
+            nodeStates={nodeStates}
+            phaseInfo={phaseInfo}
+            eventFeed={eventFeed}
+          />
         </div>
 
-        {/* 右下：技能面板（占 40% 高度） */}
-        <div className="h-[40%]">
+        {/* 技能面板（占 35% 高度） */}
+        <div className="flex-1">
           <SkillPanel loadedSkills={loadedSkills} />
         </div>
+      </div>
+
+      {/* 右栏：全员事件流（20%） */}
+      <div className="w-[20%] min-w-[220px]">
+        <EventStream events={eventFeed} />
       </div>
 
       {/* 浮层：浏览器实时画面（browser 节点执行时自动弹出） */}

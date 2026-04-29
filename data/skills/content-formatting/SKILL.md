@@ -4,7 +4,7 @@ triggers: [排版, 格式, 终稿, 输出, SEO, 优化, 发布, 定稿, 美化, 
 priority: 7
 description: 内容创作最终阶段的排版优化、SEO 处理和终稿输出流程
 summary: 四步流程：结构检查（标题层级/段落长度/可读性增强）→平台适配（公众号/技术博客/知乎各有不同格式要求）→SEO基础优化（关键词密度/摘要/内链）→终稿输出（通读校对+写入 ./output/xxx_final.md，含元信息头）。不改变原文含义，只做格式和可读性优化。
-version: "1.0"
+version: "1.1"
 target_role: agent
 ---
 
@@ -54,14 +54,71 @@ target_role: agent
 3. **关键词密度**：核心关键词自然出现 3-5 次，不堆砌
 4. **内链建议**：标注可添加内链的位置和建议链接文本
 
-### 第四步：终稿输出
+### 第四步：配图插入（如有配图）
+
+如果 `<任务目录>/drafts/image_requirements.json` 文件存在，说明前序写作阶段产出了配图需求，且配图生成阶段已将图片下载并整理到 `<任务目录>/downloads/` 目录。**图片已按需求 id 重命名**（如 `img_1.png`、`img_2.jpg`），可直接按 id 匹配。
+
+1. **读取配图需求文件**：用 `write_and_run_script` 读取并解析 `drafts/image_requirements.json`
+2. **扫描下载目录**：列出 `<任务目录>/downloads/` 下所有图片文件（`.png`、`.jpg`、`.jpeg`、`.webp`）
+3. **按 id 匹配图片文件**：每条需求的 `id` 字段（如 `img_1`）对应 `downloads/` 下的同名图片文件（如 `img_1.png`）
+4. **按 position 定位插入位置**：根据 `position` 字段（如 `chapter_1 段落2后`）定位正文中的对应段落
+5. **插入 Markdown 图片引用**：在对应位置插入图片标记
+
+**图片引用格式**（终稿在 `output/`，图片在 `downloads/`，使用相对路径）：
+```markdown
+![图片描述](../downloads/img_1.png)
+```
+
+**匹配逻辑**：
+- 图片文件名 = `{id}.{扩展名}`，直接用 id 前缀在 `downloads/` 目录中查找匹配的文件
+- 如果某个 id 对应的图片不存在（可能生成失败），跳过该条，继续处理其余的
+- 每张图片使用其 `description` 字段作为 alt 文本
+
+**示例**：
+假设 `image_requirements.json` 中有：
+```json
+{"id": "img_1", "position": "chapter_1 段落2后", "description": "AI芯片架构图"}
+```
+且 `downloads/` 中有 `img_1.png`（已由系统自动重命名），则在 chapter_1 的第 2 段后插入：
+```markdown
+![AI芯片架构图](../downloads/img_1.png)
+```
+
+> **注意**：如果 `image_requirements.json` 不存在或 `downloads/` 中无图片文件，跳过此步骤。
+
+### 第五步：终稿输出
 
 1. **通读全文**：检查有无错别字、语病、前后矛盾
 2. **字数确认**：是否在目标字数范围内（允许 ±20% 偏差）
 3. **输出终稿文件**：
    - 使用 `write_and_run_script` 将终稿写入文件
-   - 文件名格式：`./output/[主题简称]_final.md`
+   - 终稿写入 `<任务目录>/output/[主题简称]_final.md`
    - 文件开头包含元信息（标题、作者、日期、字数）
+
+### 第六步：文件整理
+
+终稿生成后，将任务过程中产生的所有中间文件（分章节草稿、调研笔记、素材等）统一归档到 `drafts/` 子目录，`output/` 目录只保留最终交付物：
+
+```bash
+cd <任务目录>
+# 将 output/ 中的过程文件移入 drafts/（保留终稿）
+mv -f output/chapter_*.md output/section_*.md output/draft_*.md output/research_*.md output/outline*.md drafts/ 2>/dev/null
+# 将任务根目录下的散落中间文件也移入 drafts/
+mv -f *.tmp *.bak drafts/ 2>/dev/null
+echo "✅ 过程文件已归档到 drafts/"
+echo "--- output/ 最终交付物 ---"
+ls -la output/
+echo "--- drafts/ 过程文件 ---"
+ls -la drafts/
+```
+
+最终目录结构应为：
+```
+<任务目录>/
+  ├── output/      # 仅终稿交付物（如 xxx_final.md）
+  ├── drafts/      # 所有过程文件（章节草稿、调研笔记、大纲等）
+  └── downloads/   # 浏览器下载的文件
+```
 
 ### 输出格式
 
@@ -83,3 +140,4 @@ target_role: agent
 - **保持原意**：排版优化不能改变原文含义和论点
 - **不过度修饰**：避免添加原文没有的内容
 - **格式一致**：全文使用统一的标记风格（如统一用 ** 加粗而非混用）
+- **过程文件必须归档**：终稿输出后必须执行文件整理，`output/` 中不允许残留草稿

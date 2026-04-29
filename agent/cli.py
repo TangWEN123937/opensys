@@ -24,10 +24,10 @@ from rich.prompt import Prompt
 from langgraph.types import Command
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-from .graph import compile_graph
+from .graph import compile_graph, reset_prompt_cache
 from .db.manager import DatabaseManager
 from .model_manager import get_llm, list_cached_models, clear_cache, list_available_models, resolve_model_config
-from .utils import sanitize_text
+from .utils import sanitize_text, ensure_str_content
 from .safe_saver import SafeAsyncSqliteSaver
 from . import config
 
@@ -59,9 +59,12 @@ async def main(thread_id: Optional[str] = None, new_thread: bool = False):
     # 2. 指定了 --new → 新建线程
     # 3. 都没指定 → 自动续接最近的活跃线程，没有则新建
     if thread_id is not None:
+        # 继续已有对话，重置缓存以确保读取最新 memory
+        reset_prompt_cache()
         console.print(f"\n[bold blue]🔄 继续对话[/bold blue] | 线程 ID: {thread_id[:8]}...")
     elif new_thread:
         thread_id = str(uuid.uuid4())
+        reset_prompt_cache()
         console.print(f"\n[bold green]🆕 新建对话[/bold green] | 线程 ID: {thread_id[:8]}...")
     else:
         # 自动查找最近的活跃线程
@@ -76,6 +79,7 @@ async def main(thread_id: Optional[str] = None, new_thread: bool = False):
             console.print("[dim]提示: 输入 /new 新建对话, /threads 查看所有对话[/dim]")
         else:
             thread_id = str(uuid.uuid4())
+            reset_prompt_cache()
             console.print(f"\n[bold green]🆕 新建对话（首次使用）[/bold green] | 线程 ID: {thread_id[:8]}...")
 
     # 记录对话
@@ -95,8 +99,8 @@ async def main(thread_id: Optional[str] = None, new_thread: bool = False):
 
     while True:
         try:
-            # 获取用户输入
-            user_input = Prompt.ask("[bold cyan]你[/bold cyan]")
+            # 获取用户输入（sanitize_text 清理退格产生的 surrogate 乱码）
+            user_input = sanitize_text(Prompt.ask("[bold cyan]你[/bold cyan]"))
 
             if user_input.strip().lower() in ("exit", "quit", "q"):
                 console.print("\n[dim]再见！👋[/dim]")
@@ -108,7 +112,7 @@ async def main(thread_id: Optional[str] = None, new_thread: bool = False):
             # --- 处理 CLI 命令（以 / 开头） ---
             if user_input.strip().startswith("/"):
                 cmd_result = await _handle_cli_command(
-                    user_input.strip(), current_model_config, db, thread_id, saver
+                    user_input.strip(), current_model_config, db, thread_id, saver, graph
                 )
                 if cmd_result is None:
                     pass  # 无需修改任何状态
@@ -117,11 +121,13 @@ async def main(thread_id: Optional[str] = None, new_thread: bool = False):
                     thread_id = cmd_result["thread_id"]
                     graph_config["configurable"]["thread_id"] = thread_id
                     await db.create_conversation(thread_id)
+                    reset_prompt_cache()  # 切换线程时重置缓存
                 elif cmd_result.get("_action") == "new_thread":
                     # 新建对话线程
                     thread_id = cmd_result["thread_id"]
                     graph_config["configurable"]["thread_id"] = thread_id
                     await db.create_conversation(thread_id)
+                    reset_prompt_cache()  # 新线程重置缓存
                 elif cmd_result.get("_action") == "delete_thread":
                     # 删除对话后自动切换：如果删的是当前对话，新建一个
                     deleted_id = cmd_result["thread_id"]
@@ -129,6 +135,7 @@ async def main(thread_id: Optional[str] = None, new_thread: bool = False):
                         thread_id = str(uuid.uuid4())
                         graph_config["configurable"]["thread_id"] = thread_id
                         await db.create_conversation(thread_id)
+                        reset_prompt_cache()  # 新线程重置缓存
                         console.print(f"[bold green]🆕 已自动新建对话[/bold green] | 线程 ID: {thread_id[:8]}...")
                 elif cmd_result.get("_action") == "plan":
                     # /plan 命令：直接进入 Advisor 规划模式（跳过 LLM 调用）
@@ -206,9 +213,11 @@ async def _run_graph_with_approval(graph, graph_input, graph_config, db, thread_
                 if kind == "on_chat_model_stream":
                     chunk = data.get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
-                        content = sanitize_text(chunk.content)
-                        console.print(content, end="", style="green")
-                        ai_content += content
+                        # Anthropic 返回 list 格式 content，需先转为 str
+                        content = sanitize_text(ensure_str_content(chunk.content))
+                        if content:  # 跳过空内容（如 Anthropic 的非 text 块）
+                            console.print(content, end="", style="green")
+                            ai_content += content
 
                     # 深度思考内容
                     if chunk and hasattr(chunk, "additional_kwargs"):
@@ -434,7 +443,7 @@ async def list_conversations():
 
 async def _handle_cli_command(
     cmd: str, current_model_config: dict, db: DatabaseManager, current_thread_id: str,
-    saver=None,
+    saver=None, graph=None,
 ) -> object:
     """
     处理 CLI 斜杠命令
@@ -458,7 +467,10 @@ async def _handle_cli_command(
             "[bold]/switch[/bold] <线程ID前缀> — 切换到指定对话\n"
             "  例: /switch a3f2\n"
             "[bold]/del[/bold] <ID前缀> [更多ID...] — 删除对话（支持批量）\n"
-            "  例: /del a3f2  或  /del a3f2 b7c1 0e9d\n\n"
+            "  例: /del a3f2  或  /del a3f2 b7c1 0e9d\n"
+            "[bold]/view[/bold] <ID前缀> [选项] — 查看对话详细内容\n"
+            "  选项: brief(摘要) state(状态) export=文件名(导出)\n"
+            "  例: /view efe9  或  /view efe9 brief  或  /view efe9 state\n\n"
             "[bold cyan]— 模型管理 —[/bold cyan]\n"
             "[bold]/model[/bold] <模型名> — 切换模型\n"
             "  例: /model deepseek-chat\n"
@@ -599,6 +611,18 @@ async def _handle_cli_command(
             return {"_action": "delete_thread", "thread_id": current_thread_id}
         return None
 
+    # ==================== 会话查看命令 ====================
+
+    elif command == "/view":
+        if not args_str:
+            console.print("[yellow]用法: /view <线程ID前缀> [选项][/yellow]")
+            console.print("[dim]选项: brief(摘要) state(状态) export=文件名(导出)[/dim]")
+            console.print("[dim]例: /view efe9  |  /view efe9 brief  |  /view efe9 state  |  /view efe9 export=chat.md[/dim]")
+            return None
+
+        result = await _handle_view_command(args_str, db, saver)
+        return result
+
     # ==================== 记忆管理命令 ====================
 
     elif command == "/memory":
@@ -715,6 +739,313 @@ async def _handle_cli_command(
     else:
         console.print(f"[yellow]未知命令: {command}，输入 /help 查看可用命令[/yellow]")
         return None
+
+
+async def _handle_view_command(args_str: str, db: DatabaseManager, saver) -> None:
+    """
+    处理 /view 命令：查看指定会话的对话消息、pipeline 状态或导出
+
+    语法: /view <ID前缀> [brief] [state] [export=文件名]
+    """
+    from pathlib import Path
+    import json
+
+    tokens = args_str.split()
+    prefix = tokens[0]
+    opts = set(t.lower() for t in tokens[1:] if "=" not in t)
+    kv_opts = {}
+    for t in tokens[1:]:
+        if "=" in t:
+            k, v = t.split("=", 1)
+            kv_opts[k.lower()] = v
+
+    brief = "brief" in opts
+    show_state = "state" in opts
+    export_file = kv_opts.get("export")
+
+    # 解析完整 thread_id
+    conv = await db.get_conversation_by_id(prefix)
+    if not conv:
+        # 检查多匹配
+        cursor = await db.conn.execute(
+            "SELECT thread_id, title FROM conversations WHERE thread_id LIKE ? AND status = 'active' LIMIT 5",
+            (prefix + "%",),
+        )
+        rows = await cursor.fetchall()
+        if len(rows) > 1:
+            console.print(f"[yellow]⚠️ '{prefix}' 匹配到多个对话，请更精确：[/yellow]")
+            for r in rows:
+                console.print(f"  [cyan]{r[0][:8]}...[/cyan] | {r[1] or '未命名对话'}")
+        else:
+            console.print(f"[yellow]⚠️ 未找到匹配 '{prefix}' 的对话[/yellow]")
+        return None
+
+    full_id = conv["thread_id"]
+
+    # 从 checkpoint 加载 state
+    cfg = {"configurable": {"thread_id": full_id}}
+    raw = await saver.aget(cfg)
+    if not raw:
+        console.print(f"[yellow]⚠️ 会话 {full_id[:8]} 的 checkpoint 数据为空[/yellow]")
+        return None
+
+    cv = raw.get("channel_values", raw) if isinstance(raw, dict) else raw
+    messages = cv.get("messages", [])
+
+    console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
+    console.print(f"[bold cyan] 会话: {full_id[:8]}   消息数: {len(messages)}[/bold cyan]")
+    console.print(f"[bold cyan]{'='*60}[/bold cyan]")
+
+    # 显示 pipeline 状态
+    if show_state:
+        _print_view_state(cv)
+
+    # 导出（默认写到 data/exports/ 目录，Docker 挂载后宿主机可直接访问）
+    if export_file:
+        from pathlib import Path
+        export_dir = config.DATA_DIR / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        # 如果用户只给了文件名（无路径分隔符），自动放到 data/exports/
+        if "/" not in export_file and "\\" not in export_file:
+            export_file = str(export_dir / export_file)
+        _export_view_conversation(messages, export_file, full_id)
+        return None
+
+    # 打印消息
+    if not messages:
+        console.print("[dim]  (无消息)[/dim]")
+        return None
+
+    for i, msg in enumerate(messages):
+        _print_view_message(i, msg, brief=brief)
+
+    console.print()
+    return None
+
+
+def _print_view_message(idx: int, msg, brief: bool = False):
+    """格式化并打印单条消息"""
+    import json
+
+    msg_type = type(msg).__name__
+    content = getattr(msg, "content", "") or ""
+
+    # Anthropic 格式 content: [{"type": "text", "text": "..."}]
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(item.get("text", ""))
+            elif isinstance(item, dict) and item.get("type") == "image_url":
+                text_parts.append("[图片]")
+            else:
+                text_parts.append(str(item)[:100])
+        content = "\n".join(text_parts)
+
+    tool_calls = getattr(msg, "tool_calls", []) or []
+    tool_name = getattr(msg, "name", "") or ""
+
+    # 消息头样式
+    if "Human" in msg_type:
+        header = "[bold green][{:3d}] 👤 用户[/bold green]".format(idx)
+    elif "AI" in msg_type:
+        header = "[bold blue][{:3d}] 🤖 AI[/bold blue]".format(idx)
+    elif "Tool" in msg_type:
+        header = "[bold magenta][{:3d}] 🔧 {}[/bold magenta]".format(idx, tool_name)
+    elif "System" in msg_type:
+        header = "[dim][{:3d}] ⚙️  System[/dim]".format(idx)
+    else:
+        header = "[dim][{:3d}] ❓ {}[/dim]".format(idx, msg_type)
+
+    # 工具调用标记
+    if tool_calls:
+        tc_names = [tc.get("name", "?") for tc in tool_calls]
+        header += f"  [yellow]→ {', '.join(tc_names)}[/yellow]"
+
+    console.print(header)
+
+    # 消息内容
+    if content:
+        if brief:
+            short = content[:200].replace("\n", " ")
+            suffix = f"[dim]... ({len(content)} 字符)[/dim]" if len(content) > 200 else ""
+            console.print(f"      {short}{suffix}")
+        else:
+            if "Tool" in msg_type and len(content) > 2000:
+                console.print("[dim]      ─── 工具输出 ───[/dim]")
+                for line in content[:2000].split("\n"):
+                    console.print(f"[dim]      {line}[/dim]")
+                console.print(f"[dim]      ... (共 {len(content)} 字符，已截断)[/dim]")
+                console.print("[dim]      ─── 截断 ───[/dim]")
+            else:
+                for line in content.split("\n"):
+                    console.print(f"      {line}")
+
+    # 工具调用参数（非简要模式）
+    if tool_calls and not brief:
+        for tc in tool_calls:
+            args = tc.get("args", {})
+            console.print(f"[yellow]      ┌─ {tc.get('name', '?')} 参数:[/yellow]")
+            for k, v in args.items():
+                v_str = str(v)
+                if len(v_str) > 300:
+                    v_str = v_str[:300] + f"... ({len(v_str)} 字符)"
+                console.print(f"[yellow]      │  {k}: {v_str}[/yellow]")
+            console.print("[yellow]      └─[/yellow]")
+
+    console.print()  # 空行分隔
+
+
+def _print_view_state(cv: dict):
+    """打印 pipeline 和 subtasks 状态"""
+    import json
+
+    console.print(f"\n[bold cyan]  ── Pipeline & State ──[/bold cyan]")
+    console.print(f"  消息数:       {len(cv.get('messages', []))}")
+    console.print(f"  当前阶段:     {cv.get('current_phase', 0)}")
+    console.print(f"  返工次数:     {cv.get('_rework_count', 0)}")
+    console.print(f"  审查结果:     {cv.get('review_result', '无')}")
+    console.print(f"  任务目录:     {cv.get('_task_dir', '无')}")
+    console.print(f"  advisor_called: {cv.get('advisor_called', False)}")
+    console.print()
+
+    # Pipeline
+    pipeline = cv.get("pipeline")
+    if pipeline:
+        console.print("[bold]  📋 Pipeline:[/bold]")
+        console.print(f"     名称: {pipeline.get('name', '?')}")
+        console.print(f"     领域: {pipeline.get('domain', '?')}")
+        phases = pipeline.get("phases", [])
+        console.print(f"     阶段数: {len(phases)}")
+        current = cv.get("current_phase", 0)
+        for p in phases:
+            pid = p.get("id", "?")
+            name = p.get("name", "?")
+            method = p.get("method", "?")
+            skill = p.get("skill", "无")
+            review = p.get("review", True)
+            desc = p.get("description", "")[:60]
+            marker = " [bold yellow]◀ 当前[/bold yellow]" if (isinstance(pid, int) and pid - 1 == current) else ""
+            console.print(
+                f"     Phase {pid}: [bold]{name}[/bold] [{method}] "
+                f"skill={skill} review={review}{marker}"
+            )
+            if desc:
+                console.print(f"[dim]              {desc}[/dim]")
+        console.print()
+    else:
+        console.print("[dim]  📋 Pipeline: 无[/dim]\n")
+
+    # Subtasks
+    subtasks = cv.get("subtasks")
+    if subtasks:
+        console.print("[bold]  📦 子任务:[/bold]")
+        for st in subtasks:
+            status = st.get("status", "?")
+            icon = {"done": "✅", "pending": "⏳", "rework": "🔄", "failed": "❌", "blocked": "🚫"}.get(status, "❓")
+            desc = st.get("description", "")[:80]
+            console.print(f"     {icon} {st.get('id', '?')}: [{status}] {desc}")
+            files = st.get("output_files", [])
+            for f in files:
+                console.print(f"[dim]        📄 {f}[/dim]")
+            output = st.get("output", "")
+            if output:
+                console.print(f"[dim]        输出: {output[:200]}{'...' if len(output) > 200 else ''}[/dim]")
+        console.print()
+    else:
+        console.print("[dim]  📦 子任务: 无[/dim]\n")
+
+    # Advisor context
+    ac = cv.get("advisor_context")
+    if ac:
+        console.print("[bold]  🧠 Advisor Context:[/bold]")
+        console.print(f"     mode: {ac.get('mode', '?')}")
+        console.print(f"     request: {ac.get('user_request', '')[:200]}")
+        console.print()
+
+    # 其他状态
+    skip_keys = {"messages", "pipeline", "subtasks", "current_phase", "_rework_count",
+                 "review_result", "review_feedback", "_task_dir", "advisor_called",
+                 "advisor_context", "auth_level", "pending_command", "risk_level",
+                 "approval_result", "modified_command", "model_config", "_recent_tool_calls"}
+    other = {k: cv[k] for k in cv if k not in skip_keys and cv[k] is not None}
+    if other:
+        console.print("[bold]  📎 其他状态:[/bold]")
+        for k, v in other.items():
+            console.print(f"     {k}: {str(v)[:200]}")
+        console.print()
+
+
+def _export_view_conversation(messages: list, filepath: str, thread_id: str):
+    """导出会话消息到 Markdown 文件"""
+    import json
+    from pathlib import Path
+    from datetime import datetime
+
+    lines = [
+        f"# 会话记录: {thread_id[:8]}",
+        f"",
+        f"完整 ID: `{thread_id}`",
+        f"消息数: {len(messages)}",
+        f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"",
+        f"---",
+        f"",
+    ]
+
+    for i, msg in enumerate(messages):
+        msg_type = type(msg).__name__
+        content = getattr(msg, "content", "") or ""
+        if isinstance(content, list):
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text_parts.append(item.get("text", ""))
+                else:
+                    text_parts.append(str(item)[:200])
+            content = "\n".join(text_parts)
+
+        tool_calls = getattr(msg, "tool_calls", []) or []
+        tool_name = getattr(msg, "name", "") or ""
+
+        if "Human" in msg_type:
+            lines.append(f"### [{i}] 👤 用户")
+        elif "AI" in msg_type:
+            tc_info = ""
+            if tool_calls:
+                tc_names = [tc.get("name", "?") for tc in tool_calls]
+                tc_info = f" → {', '.join(tc_names)}"
+            lines.append(f"### [{i}] 🤖 AI{tc_info}")
+        elif "Tool" in msg_type:
+            lines.append(f"### [{i}] 🔧 {tool_name}")
+        else:
+            lines.append(f"### [{i}] {msg_type}")
+
+        lines.append("")
+        if content:
+            if "Tool" in msg_type and len(content) > 3000:
+                lines.append(f"```\n{content[:3000]}\n... (共 {len(content)} 字符)\n```")
+            else:
+                lines.append(content)
+        lines.append("")
+
+        if tool_calls:
+            for tc in tool_calls:
+                args = tc.get("args", {})
+                lines.append(f"**工具参数** `{tc.get('name', '?')}`:")
+                lines.append("```json")
+                args_dump = json.dumps(args, ensure_ascii=False, indent=2)
+                if len(args_dump) > 1000:
+                    args_dump = args_dump[:1000] + "\n... (已截断)"
+                lines.append(args_dump)
+                lines.append("```")
+                lines.append("")
+
+        lines.append("---")
+        lines.append("")
+
+    Path(filepath).write_text("\n".join(lines), encoding="utf-8")
+    console.print(f"[bold green]✅ 已导出到 {filepath} ({len(messages)} 条消息)[/bold green]")
 
 
 def run():

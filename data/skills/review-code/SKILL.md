@@ -1,6 +1,6 @@
 ---
 name: 代码执行审查
-triggers: [执行, implement, code, develop, 开发, 编码, 脚本, 部署, deploy, 审查, review, 检查代码, 代码质量, 重构, refactor, 优化代码, code review, 审核]
+triggers: [implement, code, develop, 开发, 编码, 脚本, 部署, deploy, 检查代码, 代码质量, 重构, refactor, 优化代码, code review]
 priority: 8
 description: 代码/执行类产出物的审查标准，覆盖功能完成度、代码质量、安全检查、架构一致性、输出验证
 summary: 五维度审查清单：①功能完成度（任务是否全部完成、文件是否创建）②代码质量（单一职责/命名/重复代码/错误处理）③安全检查（硬编码密钥/输入校验/路径遍历/命令注入）④架构一致性（是否遵循现有模式、配置是否集中管理）⑤输出验证（执行证据/文件位置/回归问题）。评分1-10，>=7 pass，4-6 fail 返工，<=3 replan。

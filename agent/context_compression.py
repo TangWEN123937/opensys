@@ -27,6 +27,7 @@ from langchain_core.messages import (
 )
 
 from . import config
+from .utils import ensure_str_content
 
 
 # ==================== 图片压缩配置 ====================
@@ -120,7 +121,8 @@ async def summarize_old_messages(
     try:
         # 调用 LLM 生成摘要（使用不带工具绑定的基础模型）
         summary_response = await llm.ainvoke([HumanMessage(content=summary_prompt)])
-        summary_text = summary_response.content if isinstance(summary_response.content, str) else str(summary_response.content)
+        # Anthropic 返回 list 格式 content，统一提取文本
+        summary_text = ensure_str_content(summary_response.content)
     except Exception as e:
         print(f"[上下文压缩] 摘要生成失败: {e}")
         return None

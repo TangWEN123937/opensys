@@ -15,6 +15,7 @@ Hook 类型：
 
 from langchain_core.messages import AIMessage, ToolMessage
 
+from .pipeline_logger import log_tool_loop
 from .permissions import (
     check_path_permission,
     check_command_permission,
@@ -112,7 +113,7 @@ def _check_tool_call(tool_name: str, args: dict) -> str | None:
                 if path_reason:
                     return path_reason
 
-    # ask_user / write_todos / update_memory 不做权限检查
+    # ask_user / update_memory 不做权限检查
     return None
 
 
@@ -227,6 +228,8 @@ def _detect_tool_loop(state: dict) -> dict | None:
                 )
             )]
         print(f"[Hook] 工具循环检测: {current_tool} 连续 5 次相同调用，强制中断")
+        # 记录工具死循环诊断日志
+        log_tool_loop(state, call_signature, 5)
     elif len(recent) >= 3 and len(set(recent[-3:])) == 1:
         # 连续 3 次完全相同调用 → 注入警告
         from langchain_core.messages import HumanMessage
@@ -237,5 +240,7 @@ def _detect_tool_loop(state: dict) -> dict | None:
             )
         )]
         print(f"[Hook] 工具循环检测: {current_tool} 连续 3 次相同调用，发出警告")
+        # 记录工具循环警告诊断日志
+        log_tool_loop(state, call_signature, 3)
 
     return update

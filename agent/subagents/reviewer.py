@@ -22,7 +22,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ..model_manager import get_base_llm, is_structured_output_blocked, block_structured_output
+from ..utils import ensure_str_content
 from .. import config
+from ..pipeline_logger import log_review
 
 
 # ==================== 结构化输出 Schema ====================
@@ -75,7 +77,17 @@ JSON 格式：
 - 必须逐个审查每个子任务的产出物，对照任务要求和审查清单检查
 - 未通过时，必须在 subtask_feedback 中指明每个子任务的具体问题和改正方向
 - 已完成的子任务设为 passed=true，返工时不需要重做
-- 满足核心要求即 pass，不要过度要求"""
+- 满足核心要求即 pass，不要过度要求
+
+格式限制认知（产出物为 Markdown 格式时必须遵守）：
+- Markdown 不支持页码、页眉页脚、分页符、目录页码等排版功能，禁止因缺少这些而扣分
+- 文件如标注"已截断"，说明内容过长被系统截取，不代表作者遗漏——不得因截断标记而判定"内容不完整"
+- 论文排版（字体、行距、页边距等）是后续排版阶段的工作，写作阶段只需关注内容质量
+
+审查纪律：
+- 禁止无证据质疑：不得仅凭感觉质疑数据准确性，必须指出具体矛盾点
+- 禁止模棱两可反馈：每条问题必须明确指出什么地方有什么问题、应该怎么改
+- 宁可漏报不可误报：错误质疑会导致无意义返工，拿不准就不提"""
 
 
 # ==================== Reviewer 节点函数 ====================
@@ -144,7 +156,8 @@ async def reviewer_node(state: dict) -> dict:
         print(f"[Reviewer] 结构化输出失败，fallback 到普通调用...")
         try:
             response = await base_llm.ainvoke(messages)
-            response_text = response.content if hasattr(response, "content") else str(response)
+            # Anthropic 返回 list 格式 content，需统一转为 str
+            response_text = ensure_str_content(response.content) if hasattr(response, "content") else str(response)
             print(f"[Reviewer] fallback 原始输出前 500 字符: {response_text[:500]}")
             review = _parse_review_json(response_text)
         except Exception as e:
@@ -184,6 +197,27 @@ async def reviewer_node(state: dict) -> dict:
         sf if isinstance(sf, dict) else sf.model_dump() if hasattr(sf, 'model_dump') else {}
         for sf in subtask_feedback
     ]
+
+    # 记录审查结果诊断日志（非 pass 或低分时记录，方便分析常见失败模式）
+    log_review(state, {
+        "result": result,
+        "score": score,
+        "feedback": feedback,
+        "issues": issues,
+        "subtask_feedback": serialized_sf,
+    })
+
+    # === 11. 保存审查报告到文件（覆盖更新，始终只保留一个文件） ===
+    _save_review_report(
+        state=state,
+        phase=phase,
+        result=result,
+        score=score,
+        feedback=feedback,
+        issues=issues,
+        suggestions=suggestions,
+        subtask_feedback=serialized_sf,
+    )
 
     return {
         "review_result": result,
@@ -305,10 +339,11 @@ def _is_text_file(path) -> bool:
 
 def _extract_deliverable(state: dict) -> str:
     """
-    从 State.messages 中提取纯产出物（最终输出）
+    提取当前阶段的纯产出物（最终输出），供 Reviewer 审查。
 
     提取策略（按优先级）：
-    1. 检测消息中引用的文件路径 → 自动读取文件完整内容（核心改进）
+    0. 优先从 subtasks[].output_files 直接读取文件内容（确定性，不靠猜测）
+    1. 检测消息中引用的文件路径 → 自动读取文件完整内容
     2. 收集 AIMessage 的最终文本输出（排除中间思考）
     3. 收集 ToolMessage 中有实质内容的输出
 
@@ -326,15 +361,38 @@ def _extract_deliverable(state: dict) -> str:
     from pathlib import Path
     from langchain_core.messages import ToolMessage
 
+    # === 策略0：从 subtasks[].output_files 直接读取产出文件（最可靠） ===
+    subtasks = state.get("subtasks") or []
+    known_files = set()  # 已通过 output_files 读取的路径，避免后续重复读取
+    file_contents_from_subtasks = []
+    for st in subtasks:
+        for fpath in (st.get("output_files") or []):
+            try:
+                p = Path(fpath)
+                if not (p.exists() and p.is_file() and p.stat().st_size > 0):
+                    continue
+                if not _is_text_file(p):
+                    continue
+                text = p.read_text(encoding="utf-8", errors="replace")
+                if len(text) > 15000:
+                    text = text[:15000] + f"\n\n... [文件过长，已截断，总共 {len(text)} 字符]"
+                file_contents_from_subtasks.append(
+                    f"### 📄 {st.get('id', '?')} 产出文件: {fpath}\n```\n{text}\n```"
+                )
+                known_files.add(fpath)
+                print(f"[Reviewer] 从 output_files 读取: {fpath} ({p.stat().st_size} bytes)")
+            except Exception as e:
+                print(f"[Reviewer] 读取 output_files {fpath} 失败: {e}")
+
     messages = state.get("messages", [])
     current_phase = state.get("current_phase", 0)
 
     # 需要跳过的状态消息前缀
     _skip_prefixes = ("✅ Phase", "🔄", "🔍 **审查结果", "🔍 审查", "🎉 所有", "⏭️ Phase")
 
-    # === 第一遍：收集消息内容，同时检测文件引用 ===
+    # === 策略1-3：从消息中收集内容 + 检测文件引用 ===
     parts = []
-    file_refs = set()  # 检测到的文件路径
+    file_refs = set()
 
     for msg in reversed(messages):
         content = msg.content if hasattr(msg, "content") and msg.content else ""
@@ -361,48 +419,78 @@ def _extract_deliverable(state: dict) -> str:
         # 收集 ToolMessage 中关键结果（文件写入、脚本执行等）
         elif isinstance(msg, ToolMessage) and content:
             tool_name = getattr(msg, "name", "")
-            # 检测工具输出中的文件引用
             file_refs.update(_detect_file_refs(content))
-            # 只收集有实质内容的工具输出（跳过简短的确认消息）
             if len(content) > 30:
                 truncated = content[:3000] if len(content) > 3000 else content
                 parts.append(f"[{tool_name} 输出] {truncated}")
 
-        # 最多收集 10 条，控制审查包大小
         if len(parts) >= 10:
             break
 
     parts.reverse()
 
-    # === 第二遍：自动读取引用的文件内容 ===
-    # 当产出物是"文件已写入xxx"时，Reviewer 需要看到实际文件内容而非描述
-    file_contents = []
+    # === 从消息中检测到的文件引用（排除已通过 output_files 读取的） ===
+    file_contents_from_msgs = []
     for fpath in sorted(file_refs):
+        if fpath in known_files:
+            continue  # 已通过 output_files 读取，跳过
         try:
             p = Path(fpath)
             if not (p.exists() and p.is_file() and p.stat().st_size > 0):
                 continue
-            # 跳过二进制文件（图片、压缩包等）
             if not _is_text_file(p):
                 print(f"[Reviewer] 跳过非文本文件: {fpath}")
                 continue
             text = p.read_text(encoding="utf-8", errors="replace")
-            # 截断过长文件（保留前 8000 字，足够审查）
-            if len(text) > 8000:
-                text = text[:8000] + f"\n\n... [文件过长，已截断，总共 {len(text)} 字符]"
-            file_contents.append(f"### 📄 文件内容: {fpath}\n```\n{text}\n```")
-            print(f"[Reviewer] 已读取产出物文件: {fpath} ({p.stat().st_size} bytes)")
+            if len(text) > 15000:
+                text = text[:15000] + f"\n\n... [文件过长，已截断，总共 {len(text)} 字符]"
+            file_contents_from_msgs.append(f"### 📄 文件内容: {fpath}\n```\n{text}\n```")
+            print(f"[Reviewer] 从消息引用读取: {fpath} ({p.stat().st_size} bytes)")
         except Exception as e:
             print(f"[Reviewer] 读取文件 {fpath} 失败: {e}")
 
     # === 组装最终产出物 ===
     result_parts = []
-    if file_contents:
-        # 文件实际内容优先（这是 Reviewer 最需要看到的）
-        result_parts.extend(file_contents)
+    # 最高优先级：从 output_files 直接读取的文件
+    if file_contents_from_subtasks:
+        result_parts.extend(file_contents_from_subtasks)
+    # 次优先级：从消息中检测到的额外文件引用
+    if file_contents_from_msgs:
+        result_parts.extend(file_contents_from_msgs)
+    # 补充：AI 输出摘要
     if parts:
-        # 附上 AI 的总结描述（作为补充上下文）
         result_parts.append("### 执行者输出摘要\n" + "\n\n---\n\n".join(parts))
+
+    # === Fallback：扫描 _task_dir/output/ 和 drafts/ 目录下的文件 ===
+    # 当所有策略都未找到文件内容时，尝试直接读取任务输出目录
+    # output/ 存放终稿交付物，drafts/ 存放章节草稿、调研报告等过程文件
+    if not file_contents_from_subtasks and not file_contents_from_msgs:
+        task_dir = state.get("_task_dir", "")
+        if task_dir:
+            # 同时扫描 output/ 和 drafts/ 两个目录
+            scan_dirs = [
+                (Path(task_dir) / "output", "终稿"),
+                (Path(task_dir) / "drafts", "草稿"),
+            ]
+            for scan_dir, dir_label in scan_dirs:
+                if not scan_dir.is_dir():
+                    continue
+                scanned_files = []
+                for f in sorted(scan_dir.iterdir()):
+                    if f.is_file() and _is_text_file(f) and f.stat().st_size > 0:
+                        if str(f) in known_files:
+                            continue
+                        try:
+                            text = f.read_text(encoding="utf-8", errors="replace")
+                            if len(text) > 15000:
+                                text = text[:15000] + f"\n\n... [已截断，共 {len(text)} 字符]"
+                            scanned_files.append(f"### 📄 {dir_label}目录扫描: {f.name}\n```\n{text}\n```")
+                            print(f"[Reviewer] fallback 扫描读取: {f} ({f.stat().st_size} bytes)")
+                        except Exception as e:
+                            print(f"[Reviewer] fallback 读取 {f} 失败: {e}")
+                if scanned_files:
+                    result_parts.extend(scanned_files)
+                    print(f"[Reviewer] fallback 从 {scan_dir} 扫描到 {len(scanned_files)} 个文件")
 
     return "\n\n".join(result_parts) if result_parts else ""
 
@@ -791,3 +879,95 @@ def _build_detailed_feedback(feedback: str, subtask_feedback: list) -> str:
                     parts.append(f"  改正建议: {fix}")
 
     return "\n".join(parts)
+
+
+def _save_review_report(
+    state: dict,
+    phase: dict,
+    result: str,
+    score: int,
+    feedback: str,
+    issues: list,
+    suggestions: list,
+    subtask_feedback: list,
+) -> None:
+    """
+    将审查结果保存为 Markdown 文件，覆盖更新同一个文件。
+
+    文件路径：<_task_dir>/drafts/review_report.md
+    每次审查都覆盖写入，始终只保留最新一份审查报告。
+
+    Args:
+        state: 当前 agent state（用于获取 _task_dir）
+        phase: 当前阶段信息
+        result: 审查结论（pass/fail/adjust/replan）
+        score: 评分 1-10
+        feedback: 总评
+        issues: 问题列表
+        suggestions: 建议列表
+        subtask_feedback: 子任务反馈列表
+    """
+    import os
+    from datetime import datetime
+
+    task_dir = state.get("_task_dir", "")
+    if not task_dir:
+        return
+
+    drafts_dir = os.path.join(task_dir, "drafts")
+    os.makedirs(drafts_dir, exist_ok=True)
+    report_path = os.path.join(drafts_dir, "review_report.md")
+
+    # 结果映射
+    result_emoji = {"pass": "✅", "fail": "❌", "adjust": "🔧", "replan": "🔄"}.get(result, "❓")
+    result_text = {"pass": "通过", "fail": "不通过（需返工）", "adjust": "后续步骤需调整", "replan": "需全量重规划"}.get(result, result)
+
+    lines = [
+        "# 审查报告",
+        "",
+        f"- **审查时间**：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- **审查阶段**：Phase {phase.get('id', '?')} — {phase.get('name', '?')}",
+        f"- **审查结论**：{result_emoji} {result_text}",
+        f"- **评分**：{score}/10",
+        "",
+        "## 总评",
+        "",
+        feedback,
+        "",
+    ]
+
+    if issues:
+        lines.append("## 发现的问题")
+        lines.append("")
+        for i, issue in enumerate(issues, 1):
+            lines.append(f"{i}. {issue}")
+        lines.append("")
+
+    if suggestions:
+        lines.append("## 改进建议")
+        lines.append("")
+        for i, sug in enumerate(suggestions, 1):
+            lines.append(f"{i}. {sug}")
+        lines.append("")
+
+    if subtask_feedback:
+        lines.append("## 子任务审查详情")
+        lines.append("")
+        lines.append("| 子任务 | 结果 | 问题 | 改正建议 |")
+        lines.append("|--------|------|------|----------|")
+        for sf in subtask_feedback:
+            sf_dict = sf if isinstance(sf, dict) else {}
+            sid = sf_dict.get("subtask_id", "?")
+            passed = sf_dict.get("passed", True)
+            issue = sf_dict.get("issue", "").replace("|", "\\|")
+            fix = sf_dict.get("fix_suggestion", "").replace("|", "\\|")
+            status = "✅ 通过" if passed else "❌ 未通过"
+            lines.append(f"| {sid} | {status} | {issue} | {fix} |")
+        lines.append("")
+
+    try:
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        print(f"[Reviewer] 审查报告已保存: {report_path}")
+    except Exception as e:
+        print(f"[Reviewer] 保存审查报告失败: {e}")

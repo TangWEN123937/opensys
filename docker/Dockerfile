@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq bc file unzip zip \
     # 文档格式转换（Markdown/HTML → docx，微信公众号文章导入需要）
     pandoc \
+    # PDF 处理依赖（PyMuPDF 渲染 PDF 页面为图像需要）
+    libgl1-mesa-glx libglib2.0-0 libmagic1 \
     # 网络工具
     net-tools iputils-ping dnsutils \
     # GUI / VNC 远程桌面（noVNC 方案，支持浏览器实时查看 + 人工操作验证码）
@@ -79,11 +81,15 @@ ENV DISPLAY=:99
 # --- 复制 supervisord 配置 ---
 COPY docker/supervisord.conf /etc/supervisor/conf.d/opensys.conf
 
+# --- 复制容器入口脚本（启动时自动修复挂载目录权限） ---
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # --- 暴露端口 ---
 # 8000: FastAPI 服务
 # 6080: noVNC Web 客户端（浏览器远程桌面）
 EXPOSE 8000 6080
 
 # --- 启动命令 ---
-# 使用 supervisord 统一管理：Xvfb + x11vnc + noVNC + FastAPI
-CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/opensys.conf"]
+# entrypoint.sh：修复挂载目录权限 → 启动 supervisord
+CMD ["/app/entrypoint.sh"]

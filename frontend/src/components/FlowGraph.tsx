@@ -23,6 +23,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { CircleAlert, ArrowLeft } from 'lucide-react'
 import type { NodeStatus, PhaseInfo } from '../types'
+import WorkflowPanel from './WorkflowPanel'
 
 interface FlowGraphProps {
   nodeStates: Record<string, NodeStatus>
@@ -537,6 +538,8 @@ export default function FlowGraph({ nodeStates, phaseInfo }: FlowGraphProps) {
               <span className="text-[var(--color-text-muted)] opacity-60">({phaseInfo.phase_method})</span>
             </div>
           )}
+          {/* 我的工作流（可查看/编辑/保存，不可删除/新建） */}
+          <WorkflowPanel />
           {/* 帮助按钮 */}
           <button
             onClick={() => setShowHelp(!showHelp)}

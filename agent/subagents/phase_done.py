@@ -17,6 +17,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import interrupt
 
 from .. import config
+from ..utils import ensure_str_content
+from ..pipeline_logger import log_rework, log_replan, log_adjust, log_escalation
 
 
 async def phase_done_node(state: dict) -> dict:
@@ -93,6 +95,7 @@ async def phase_done_node(state: dict) -> dict:
                 result["_unattended_auto_count"] = auto_count
                 return result
             print(f"[Phase-Done] replan 次数达上限 ({new_rework_count})，interrupt 请求用户介入")
+            log_escalation(state, "replan_loop")
             user_decision = interrupt({
                 "type": "escalation",
                 "reason": "replan_loop",
@@ -117,17 +120,33 @@ async def phase_done_node(state: dict) -> dict:
         if not user_request:
             for msg in state.get("messages", []):
                 if isinstance(msg, HumanMessage) and msg.content:
-                    user_request = msg.content
+                    user_request = ensure_str_content(msg.content)
                     break
 
-        # 构建已完成阶段的进度摘要
+        # 构建已完成阶段的进度摘要 + 约束条件（告知 Advisor 哪些资源已可用）
         progress_lines = []
+        replan_constraints = [
+            "这是全量重规划，但已完成阶段的产出物仍然可用，不要重复安排已完成的工作",
+        ]
         for idx, p in enumerate(phases):
             if idx < current_phase:
                 progress_lines.append(f"  ✅ Phase {idx + 1} ({p.get('name', '?')}): 已完成")
+                # 告知 Advisor 该阶段的产出物可复用
+                skill = p.get("skill", "")
+                method = p.get("method", "")
+                # 特定阶段的资源已就绪，无需重复
+                if skill in ("pdf-vectorize", "cnki-shutong"):
+                    replan_constraints.append(
+                        f"Phase {idx + 1} ({p.get('name', '?')}) 的产出物已就绪"
+                        f"（{'文献已入库向量知识库' if skill == 'pdf-vectorize' else '文献已下载'}），"
+                        f"新规划中不要包含同类阶段"
+                    )
             elif idx == current_phase:
                 progress_lines.append(f"  ❌ Phase {idx + 1} ({p.get('name', '?')}): 执行失败，需要重新规划")
         existing_progress = "\n".join(progress_lines) if progress_lines else ""
+
+        # 记录 replan 诊断日志
+        log_replan(state, new_rework_count, replan_reason)
 
         return {
             "needs_replan": True,
@@ -135,7 +154,7 @@ async def phase_done_node(state: dict) -> dict:
             "advisor_context": {
                 "user_request": user_request,
                 "background": f"这是第 {new_rework_count + 1} 次规划尝试，前一次在 Phase {current_phase + 1} ({phase_name}) 遇到问题",
-                "constraints": [],
+                "constraints": replan_constraints,
                 "existing_progress": existing_progress,
                 "replan_reason": replan_reason,
             },
@@ -161,7 +180,7 @@ async def phase_done_node(state: dict) -> dict:
         if not user_request:
             for msg in state.get("messages", []):
                 if isinstance(msg, HumanMessage) and msg.content:
-                    user_request = msg.content
+                    user_request = ensure_str_content(msg.content)
                     break
 
         # 当前阶段视为通过（产出物可用），需要调整的是 current_phase + 1 及之后
@@ -187,6 +206,9 @@ async def phase_done_node(state: dict) -> dict:
             f"[Phase-Done] Phase {current_phase + 1} ({phase_name}) "
             f"审查结果=adjust，保留已完成阶段，增量重规划 Phase {adjust_from + 1} 起"
         )
+
+        # 记录 adjust 诊断日志
+        log_adjust(state, feedback)
 
         return {
             "needs_replan": True,
@@ -240,6 +262,7 @@ async def phase_done_node(state: dict) -> dict:
                 return result
             # 兜底：interrupt 让用户决定
             print(f"[Phase-Done] fail 返工次数达上限 ({new_rework_count})，interrupt 请求用户介入")
+            log_escalation(state, "rework_loop")
             user_decision = interrupt({
                 "type": "escalation",
                 "reason": "rework_loop",
@@ -253,6 +276,9 @@ async def phase_done_node(state: dict) -> dict:
             return _handle_user_decision(
                 user_decision, current_phase, phase_name, feedback, state
             )
+
+        # 记录 rework 诊断日志
+        log_rework(state, new_rework_count, feedback)
 
         # 正常回退：标记 rework，将审查反馈注入消息让执行者知道问题
         # 根据结构化子任务审查详情，只将未通过的子任务标记为 rework，已通过的保持 done
@@ -325,6 +351,7 @@ async def phase_done_node(state: dict) -> dict:
             return result
         # required 阶段卡死 → interrupt 让用户决定
         print(f"[Phase-Done] 阶段卡死 ({new_phase_attempts} 次)，interrupt 请求用户介入")
+        log_escalation(state, "phase_stuck")
         user_decision = interrupt({
             "type": "escalation",
             "reason": "phase_stuck",
@@ -348,10 +375,12 @@ async def phase_done_node(state: dict) -> dict:
         # 全部完成 — 重置 advisor_called，允许同一 thread 中后续新任务再次触发 Advisor
         # 设置 _pipeline_just_done=True，防止 agent 汇报轮次误触发新规划
         # 重置 _advisor_call_count，防止跨任务累积导致新任务的 Advisor 被限流
+        # 清空 advisor_context，防止残留的旧上下文在续接对话时被 agent_router 误读
         return {
             "current_phase": next_phase,
             "phase_status": "done",
             "advisor_called": False,
+            "advisor_context": None,
             "_advisor_call_count": 0,
             "_rework_count": 0,
             "_phase_attempt_count": 0,
@@ -644,22 +673,51 @@ def _check_has_deliverable(state: dict) -> bool:
     """
     检查当前阶段是否有可审查的产出物
 
-    简单检测：最近的 AIMessage 是否有实质内容（非空且非纯状态消息）
+    检测策略（任一命中即返回 True）：
+    1. 最近的 AIMessage 是否有实质内容（非空且非纯状态消息）
+    2. subtasks[].output_files 中是否有实际存在的文件
+    3. _task_dir/output/ 和 drafts/ 目录下是否有非空文件（兜底：method=agent 通过工具写文件）
 
     Returns:
         True 如果有产出物
     """
     from langchain_core.messages import AIMessage
+    from pathlib import Path
 
+    # === 策略1：检查最近 AIMessage 是否有实质内容 ===
     messages = state.get("messages", [])
-    # 检查最近 5 条消息中是否有 AIMessage 包含实质内容
     for msg in reversed(messages[-5:]):
         if isinstance(msg, AIMessage) and msg.content:
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            content = ensure_str_content(msg.content)
             # 跳过纯状态消息
             if content.startswith("✅ Phase") or content.startswith("🔄"):
                 continue
             # 有实质内容（超过 50 字符）
             if len(content) > 50:
                 return True
+
+    # === 策略2：检查 subtasks[].output_files 是否有实际文件 ===
+    for st in (state.get("subtasks") or []):
+        for fpath in (st.get("output_files") or []):
+            try:
+                p = Path(fpath)
+                if p.exists() and p.is_file() and p.stat().st_size > 0:
+                    return True
+            except (OSError, ValueError):
+                pass
+
+    # === 策略3：兜底扫描 _task_dir 目录（method=agent 通过工具写文件时） ===
+    task_dir = state.get("_task_dir", "")
+    if task_dir:
+        for sub in ("output", "drafts"):
+            scan_dir = Path(task_dir) / sub
+            if scan_dir.is_dir():
+                try:
+                    for f in scan_dir.iterdir():
+                        if f.is_file() and f.stat().st_size > 0:
+                            print(f"[Phase-Done] 在 {scan_dir} 发现产出文件: {f.name}")
+                            return True
+                except (OSError, PermissionError):
+                    pass
+
     return False

@@ -498,6 +498,51 @@ def format_skills_for_advisor() -> str:
     return "\n".join(lines)
 
 
+def load_skill_with_meta(skill_name: str) -> tuple[str | None, dict]:
+    """
+    按技能目录名加载 SKILL.md 的正文内容和元数据
+
+    供 Executor 节点使用：根据元数据中的 no_web_tool 等字段动态调整工具集。
+    支持两级目录查找：先在一级目录找，找不到则遍历分类子目录。
+
+    Args:
+        skill_name: 技能目录名（如 "paper-writing"）
+
+    Returns:
+        (正文内容, 元数据字典)，未找到返回 (None, {})
+    """
+    skills_dir = config.SKILLS_DIR
+
+    # 候选路径列表：一级目录 + 所有分类子目录下的同名目录
+    candidates = [skills_dir / skill_name / "SKILL.md"]
+    if skills_dir.exists():
+        for category_dir in skills_dir.iterdir():
+            if category_dir.is_dir() and not (category_dir / "SKILL.md").exists():
+                candidates.append(category_dir / skill_name / "SKILL.md")
+
+    for skill_file in candidates:
+        if not skill_file.exists():
+            continue
+        try:
+            content = skill_file.read_text(encoding="utf-8")
+            meta, body = _parse_front_matter(content)
+            if body:
+                from . import event_bus
+                event_bus.publish({
+                    "type": "skill_loaded",
+                    "skill_name": skill_name,
+                    "display_name": meta.get("name", skill_name),
+                    "node": "executor",
+                    "phase": None,
+                })
+            return (body.strip() if body else None), meta
+        except Exception as e:
+            print(f"[技能系统] 加载 {skill_name} 失败: {e}")
+            return None, {}
+
+    return None, {}
+
+
 def load_skill_content(skill_name: str) -> str | None:
     """
     按技能目录名加载 SKILL.md 的正文内容（不含 front matter）

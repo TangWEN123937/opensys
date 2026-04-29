@@ -26,6 +26,9 @@
 # MiniMax
 .minimaxi.com
 
+# SiliconFlow（PaddleOCR-VL 免费 OCR）
+.siliconflow.cn
+
 # 第三方 API 代理
 .dmxapi.cn
 .caolele.top
@@ -34,6 +37,8 @@
 # Python
 .pypi.org
 .pythonhosted.org
+# 清华 PyPI 镜像（Dockerfile 中配置的默认 pip 源）
+.pypi.tuna.tsinghua.edu.cn
 
 # Node.js
 .npmjs.org

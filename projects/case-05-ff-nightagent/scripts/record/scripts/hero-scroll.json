@@ -1,0 +1,20 @@
+{
+  "name": "Hero 滚动 · 30 秒烟雾测试",
+  "baseUrl": "http://localhost:3333",
+  "viewport": { "width": 1440, "height": 900 },
+  "steps": [
+    { "at": "0:00", "action": "navigate", "url": "/", "settleMs": 1000 },
+    { "at": "0:01", "action": "subtitle", "text": "FF-Autopilot · 你的目标自驾代理", "hold": 3500 },
+    { "at": "0:05", "action": "moveTo", "x": 720, "y": 580, "steps": 40 },
+    { "at": "0:06", "action": "subtitle", "text": "7×24 小时无人值守 · 设定目标，松开方向盘", "hold": 3500 },
+    { "at": "0:10", "action": "scrollBy", "y": 700, "duration": 2200 },
+    { "at": "0:12", "action": "subtitle", "text": "六大支柱 · 让 Agent 一夜不停地运转", "hold": 3500 },
+    { "at": "0:16", "action": "scrollBy", "y": 700, "duration": 2200 },
+    { "at": "0:19", "action": "subtitle", "text": "三步走 · 定目标 → Agent 自循环 → 你审批", "hold": 3500 },
+    { "at": "0:23", "action": "scrollBy", "y": 700, "duration": 2200 },
+    { "at": "0:26", "action": "subtitle", "text": "按动作付费 · 不按座位", "hold": 3000 },
+    { "at": "0:29", "action": "scrollTo", "y": 0, "duration": 1800 },
+    { "at": "0:31", "action": "subtitle", "text": "→ 准备启动自驾", "hold": 2000 },
+    { "at": "0:33", "action": "moveTo", "selector": "a[href='/dashboard']", "steps": 35 }
+  ]
+}

@@ -52,3 +52,36 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
 }
+
+/* ==================== 团队办公室动画样式 ==================== */
+
+/* 成员卡片活跃时的呼吸光效 */
+@keyframes card-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(34, 211, 238, 0.15); }
+  50% { box-shadow: 0 0 16px rgba(34, 211, 238, 0.3); }
+}
+
+/* 多行截断工具类 */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 事件流项目进入动画 */
+@keyframes feed-slide-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.space-y-0\.5 > * {
+  animation: feed-slide-in 0.15s ease-out;
+}
+
+/* 统计数字变化的微动画 */
+@keyframes stat-bump {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}

@@ -66,8 +66,26 @@ target_role: executor
 - 需要避免的常见错误：...
 ```
 
+### 第四步：保存调研报告（必须）
+
+调研完成后，**必须使用 `write_and_run_script` 将调研报告保存为文件**，供后续撰写阶段参考：
+
+```python
+import os
+drafts_dir = "<任务目录>/drafts"  # 如 /app/output/20260425_0030_xxx/drafts
+os.makedirs(drafts_dir, exist_ok=True)
+with open(f"{drafts_dir}/research_report.md", "w", encoding="utf-8") as f:
+    f.write(report_content)
+print(f"✅ 调研报告已保存到 drafts/research_report.md，共 {len(report_content)} 字符")
+```
+
+- 文件名：`research_report.md`（单次调研）或 `research_[主题].md`（多次调研时区分）
+- 保存到 `<任务目录>/drafts/`，作为过程文件归档
+- **禁止仅在消息中输出调研报告而不保存文件** — 后续撰写阶段需要引用调研成果
+
 ### 注意事项
 
+- **必须保存文件**：调研报告必须用 `write_and_run_script` 写入 `<任务目录>/drafts/`，不可仅输出到消息
 - **标注来源**：每条信息都要记录出处 URL，不编造数据
 - **时效性**：优先使用近 1-2 年的数据，旧数据需标注时间
 - **多角度**：收集支持和反对两方面的观点，避免片面

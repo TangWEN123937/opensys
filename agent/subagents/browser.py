@@ -37,6 +37,7 @@ from langchain_core.messages import AIMessage
 from .. import config
 from ..event_bus import publish as publish_event
 from ..skill_loader import match_browser_skills, load_skill_script
+from ..pipeline_logger import log_browser_event
 
 
 # ==================== Browser-Use LLM 创建 ====================
@@ -125,12 +126,31 @@ def _create_browser_llm():
 
     try:
         if provider == "deepseek":
-            from browser_use.llm.deepseek.chat import ChatDeepSeek
-            return ChatDeepSeek(
-                model=actual_model,
-                api_key=api_key,
-                **({"base_url": api_base} if api_base else {}),
-            )
+            # DeepSeek 推理模型（thinking_model=True，如 deepseek-v4-flash）不支持 tool_choice 参数，
+            # 而 browser_use.llm.deepseek.chat.ChatDeepSeek 在 structured output 路径会传 tool_choice，
+            # 导致 API 返回 400: "deepseek-reasoner does not support this tool_choice"。
+            # 解决：推理模型走 OpenAI 兼容路径，schema 注入 prompt 而非强制 tool_choice。
+            is_thinking = preset.get("thinking_model", False)
+            if is_thinking:
+                from browser_use.llm.openai.chat import ChatOpenAI as BrowserChatOpenAI
+                llm = BrowserChatOpenAI(
+                    model=actual_model,
+                    api_key=api_key,
+                    base_url=api_base or "https://api.deepseek.com/v1",
+                    add_schema_to_system_prompt=True,       # schema 注入 prompt 引导输出
+                    dont_force_structured_output=True,      # 不使用 tool_choice / json_schema
+                    remove_min_items_from_schema=True,      # 兼容性
+                )
+                llm = _patch_json_object_format(llm)
+                print(f"[Browser-LLM] DeepSeek 推理模型 → OpenAI 兼容模式（绕过 tool_choice）")
+                return llm
+            else:
+                from browser_use.llm.deepseek.chat import ChatDeepSeek
+                return ChatDeepSeek(
+                    model=actual_model,
+                    api_key=api_key,
+                    **({"base_url": api_base} if api_base else {}),
+                )
         elif provider == "anthropic":
             from browser_use.llm.anthropic.chat import ChatAnthropic
             return ChatAnthropic(
@@ -182,6 +202,16 @@ def _create_browser_llm():
         return _patch_json_object_format(llm)
 
 
+def _browser_model_supports_vision() -> bool:
+    """
+    判断当前 Browser-Use 模型是否支持视觉输入。
+    """
+    preset = config.MODEL_PRESETS.get(config.BROWSER_MODEL_NAME)
+    if not preset:
+        preset = config.MODEL_PRESETS.get(config.DEFAULT_MODEL_NAME, {})
+    return bool(preset.get("isvision"))
+
+
 # ==================== Chrome 锁文件清理 ====================
 
 def _cleanup_stale_chrome_locks(user_data_dir: str) -> None:
@@ -212,6 +242,36 @@ def _cleanup_stale_chrome_locks(user_data_dir: str) -> None:
                 print(f"[Browser-Node] 已清理陈旧锁文件: {name}")
             except OSError as e:
                 print(f"[Browser-Node] 清理锁文件 {name} 失败: {e}")
+
+
+async def _ensure_browser_session_ready(browser_session) -> None:
+    """
+    启动 BrowserSession 并确保 BrowserStateRequestEvent 有 handler。
+    """
+    await browser_session.start()
+
+    event_bus = getattr(browser_session, "event_bus", None)
+    handlers = getattr(event_bus, "handlers", {}) if event_bus else {}
+    state_handlers = handlers.get("BrowserStateRequestEvent") or []
+
+    if not state_handlers:
+        print("[Browser-Node] ⚠️ BrowserStateRequestEvent handler 缺失，重新挂载 watchdogs")
+        setattr(browser_session, "_watchdogs_attached", False)
+        await browser_session.attach_all_watchdogs()
+
+    try:
+        await asyncio.wait_for(
+            browser_session.get_browser_state_summary(include_screenshot=False),
+            timeout=20,
+        )
+    except Exception as e:
+        print(f"[Browser-Node] ⚠️ 浏览器状态预检失败，尝试重新挂载 watchdogs: {e}")
+        setattr(browser_session, "_watchdogs_attached", False)
+        await browser_session.attach_all_watchdogs()
+        await asyncio.wait_for(
+            browser_session.get_browser_state_summary(include_screenshot=False),
+            timeout=20,
+        )
 
 
 # ==================== 预置脚本参数提取 ====================
@@ -479,6 +539,74 @@ async def _run_browser_agent(task: str, url: str = "", browser_skill: str = "",
                     error="pandoc 转换超时",
                 )
 
+        # --- 2d. 注册自定义工具（save_generated_image 配图文件归档）---
+        # 场景：豆包连续生成多张图片时，每次下载的文件名可能相同（会覆盖前一张）
+        # 每轮保存图片后立即调用此工具，将图片从全局 downloads 移动到任务目录并重命名
+
+        # 预解析任务目录路径（从 task 参数中提取，供闭包使用）
+        _task_dir_for_tools = ""
+        for _line in task.split("\n"):
+            if _line.startswith("任务目录："):
+                _task_dir_for_tools = _line.replace("任务目录：", "").strip()
+                break
+
+        @tools.action(description=(
+            "将刚下载的图片文件归档到任务目录。在豆包 AI 图像生成的多轮生成中，"
+            "每次保存图片后必须立即调用此工具，避免下一轮生成的图片覆盖当前图片。\n"
+            "参数：\n"
+            "- image_id: 图片标识，对应 image_requirements.json 中的 id（如 img_1、img_2）\n"
+            "- source_filename: 刚下载的图片文件名（可选，留空则自动检测 downloads 目录中最新的图片文件）"
+        ))
+        async def save_generated_image(image_id: str, source_filename: str = "") -> ActionResult:
+            """将下载的图片移动到任务目录并按 image_id 重命名"""
+            import glob
+            import shutil
+
+            task_dir = _task_dir_for_tools
+            if not task_dir:
+                return ActionResult(
+                    extracted_content="未找到任务目录路径，无法归档图片。",
+                    error="任务目录未知",
+                )
+
+            downloads_dir = config.BROWSER_DOWNLOADS_DIR
+            task_downloads_dir = os.path.join(task_dir, "downloads")
+            os.makedirs(task_downloads_dir, exist_ok=True)
+
+            # 查找源文件：优先用指定文件名，否则取 downloads 目录中最新的图片
+            src_path = ""
+            if source_filename:
+                candidate = os.path.join(downloads_dir, source_filename.strip())
+                if os.path.isfile(candidate):
+                    src_path = candidate
+            if not src_path:
+                # 自动检测：找 downloads 目录中最新的图片文件
+                img_patterns = [os.path.join(downloads_dir, f"*.{ext}")
+                                for ext in ("png", "jpg", "jpeg", "webp", "gif")]
+                all_imgs = []
+                for pat in img_patterns:
+                    all_imgs.extend(glob.glob(pat))
+                if all_imgs:
+                    # 按修改时间倒序，取最新的
+                    all_imgs.sort(key=os.path.getmtime, reverse=True)
+                    src_path = all_imgs[0]
+
+            if not src_path or not os.path.isfile(src_path):
+                return ActionResult(
+                    extracted_content=f"在 {downloads_dir} 中未找到可归档的图片文件。",
+                    error="未找到图片文件",
+                )
+
+            # 移动并重命名：img_1.png, img_2.jpg...
+            ext = os.path.splitext(src_path)[1] or ".png"
+            dst_name = f"{image_id}{ext}"
+            dst_path = os.path.join(task_downloads_dir, dst_name)
+            shutil.move(src_path, dst_path)
+            print(f"[Browser-Use] save_generated_image: {os.path.basename(src_path)} → {dst_path}")
+            return ActionResult(
+                extracted_content=f"✅ 图片已归档: {dst_name} (保存到 {task_downloads_dir})"
+            )
+
         # --- 3. 清理陈旧的 Singleton 锁文件 ---
         # Docker 容器重建后 hostname 变化，Chrome 会误判"另一个进程正在使用 profile"
         # 从而拒绝启动。启动前主动清理这些锁文件。
@@ -533,8 +661,8 @@ async def _run_browser_agent(task: str, url: str = "", browser_skill: str = "",
                     spec.loader.exec_module(script_module)
 
                     if hasattr(script_module, "run"):
-                        # 启动浏览器并获取 page
-                        await browser_session.start()
+                        # 启动浏览器并确保 watchdog 就绪
+                        await _ensure_browser_session_ready(browser_session)
                         page = await browser_session.get_current_page()
 
                         if page:
@@ -657,7 +785,7 @@ async def _run_browser_agent(task: str, url: str = "", browser_skill: str = "",
             enable_planning=False,
             use_judge=False,
             use_thinking=False,
-            use_vision=True,
+            use_vision=_browser_model_supports_vision(),
             message_compaction=True,
             register_new_step_callback=_on_browser_step,
             # 注册可上传文件路径白名单（upload_file 操作需要）
@@ -676,6 +804,10 @@ async def _run_browser_agent(task: str, url: str = "", browser_skill: str = "",
                 + (f"\n\n{browser_skill}" if browser_skill else "")
             ),
         )
+
+        # 确保 BrowserSession 已启动且 watchdog 就绪（Agent.run 内部也会 start，
+        # 但预检可以提前发现 handler 注册异常并修复）
+        await _ensure_browser_session_ready(browser_session)
 
         # 运行（超时由 max_steps 控制）
         _browse_start = time.monotonic()
@@ -710,6 +842,12 @@ async def _run_browser_agent(task: str, url: str = "", browser_skill: str = "",
 
             print(f"[Browser-Node] ⚡ 步骤用尽，自动续行 ({_continuation_count}/{config.BROWSER_MAX_CONTINUATIONS})"
                   f" | 已执行 {total_steps} 步，再分配 {config.BROWSER_MAX_STEPS} 步")
+            # 记录浏览器续行诊断日志
+            log_browser_event({}, "browser_continuation", task=full_task[:300], details={
+                "continuation": _continuation_count,
+                "max_continuations": config.BROWSER_MAX_CONTINUATIONS,
+                "steps_so_far": total_steps,
+            })
 
             # 在同一个 browser_session 上创建新 Agent（页面状态保持）
             agent = _agent_ref[0] = Agent(
@@ -721,7 +859,7 @@ async def _run_browser_agent(task: str, url: str = "", browser_skill: str = "",
                 enable_planning=False,
                 use_judge=False,
                 use_thinking=False,
-                use_vision=True,
+                use_vision=_browser_model_supports_vision(),
                 message_compaction=True,
                 register_new_step_callback=_on_browser_step,
                 available_file_paths=_available_files if _available_files else None,
@@ -785,6 +923,8 @@ async def _run_browser_agent(task: str, url: str = "", browser_skill: str = "",
     except Exception as e:
         error_detail = traceback.format_exc()
         print(f"[Browser-Node] 异常:\n{error_detail}")
+        # 记录浏览器异常诊断日志
+        log_browser_event({}, "browser_error", task=full_task[:300] if 'full_task' in locals() else "", error=str(e))
         return f"❌ 浏览器操作失败: {str(e)}", []
     finally:
         # 确保浏览器会话关闭（加超时保护，防止 close() 卡住）
@@ -935,11 +1075,20 @@ async def browser_node(state: dict) -> dict:
         if rework_feedback:
             print(f"[Browser-Node] 收到 rework 反馈: {rework_feedback[:100]}...")
 
+    # === 获取任务目录路径（前序阶段产出物的存放位置） ===
+    task_dir = state.get("_task_dir", "")
+
     # === 构建浏览器任务描述（丰富上下文） ===
     task_parts = []
     if user_request:
         task_parts.append(f"用户需求：{user_request}")
     task_parts.append(f"当前阶段任务：{phase_desc}")
+    # 注入任务目录路径（供浏览器 Agent 定位前序阶段产出的文件）
+    if task_dir:
+        task_parts.append(f"\n任务目录：{task_dir}")
+        task_parts.append(f"  - 草稿/中间文件目录：{task_dir}/drafts/")
+        task_parts.append(f"  - 最终输出目录：{task_dir}/output/")
+        task_parts.append(f"  - 下载文件目录：{task_dir}/downloads/")
     # 注入操作细节（收件人、内容、数据字段等）
     if phase_details:
         task_parts.append(f"\n操作细节：\n{phase_details}")
@@ -976,6 +1125,22 @@ async def browser_node(state: dict) -> dict:
         if browser_skill:
             print(f"[Browser-Node] Phase {current + 1} ({phase_name}) 动态匹配浏览器技能（兜底）")
 
+    # === 配图阶段前置检查：如果依赖的 image_requirements.json 不存在，跳过该阶段 ===
+    # 场景：Advisor 预留了配图阶段，但写作 Executor 判断不需要配图，没有生成需求文件
+    if (advisor_selected_skill == "doubao-image"
+            and "image_requirements" in (phase_details or "")
+            and task_dir):
+        img_req_path = os.path.join(task_dir, "drafts", "image_requirements.json")
+        if not os.path.isfile(img_req_path):
+            print(f"[Browser-Node] Phase {current + 1} ({phase_name}) 配图需求文件不存在 ({img_req_path})，跳过配图阶段")
+            return {
+                "phase_status": "done",
+                "messages": [AIMessage(content=(
+                    f"## Phase {current + 1}: {phase_name} — 已跳过\n\n"
+                    f"前序写作阶段未生成配图需求文件 (`image_requirements.json`)，判断本文不需要配图，自动跳过本阶段。"
+                ))],
+            }
+
     # === 执行浏览器操作 ===
     print(f"[Browser-Node] 开始执行 Phase {current + 1}: {phase_name}")
     result, new_downloads = await _run_browser_agent(
@@ -995,6 +1160,8 @@ async def browser_node(state: dict) -> dict:
     if is_failure:
         # 失败：设置 review_result=fail，让 phase_done 触发重试/升级
         print(f"[Browser-Node] Phase {current + 1} 执行失败，标记 fail")
+        # 记录浏览器任务失败诊断日志
+        log_browser_event(state, "browser_fail", task=task[:300], error=result[:500])
         return {
             "phase_status": "done",
             "review_result": "fail",

@@ -49,6 +49,9 @@ services:
 
     environment:
       - OPENSYS_DATA_DIR=/app/data
+      # 宿主机用户 UID/GID（entrypoint.sh 据此 chown 挂载目录，使宿主机用户可读写）
+      - OPENSYS_UID=${OPENSYS_UID:-1000}
+      - OPENSYS_GID=${OPENSYS_GID:-1000}
       # 代理网关配置（容器内通过服务名 squid 访问）
       - OPENSYS_PROXY_HOST=squid
       - OPENSYS_PROXY_PORT=3128
@@ -61,6 +64,10 @@ services:
       - no_proxy=localhost,127.0.0.1,host.docker.internal,ollama
       # Ollama 在容器内通过 host.docker.internal 访问宿主机
       - OPENSYS_OLLAMA_API_BASE=http://host.docker.internal:11434
+      # BGE-M3 Embedding 服务（宿主机运行，容器内通过 host.docker.internal 访问）
+      - OPENSYS_EMBEDDING_URL=http://host.docker.internal:8100/api/v1/embed
+      # OpenAI 代理服务（宿主机运行，容器内通过 host.docker.internal 访问）
+      - OPENSYS_OPENAI_API_BASE=http://host.docker.internal:8081/v1
       # browser-use bubus 事件总线超时（容器中 Chromium 首次启动较慢，默认 30s 不够）
       - TIMEOUT_BrowserStartEvent=120
       - TIMEOUT_BrowserLaunchEvent=120
@@ -79,8 +86,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: "2.0"
+          memory: 8G
+          cpus: "4.0"
         reservations:
           memory: 1G
           cpus: "0.5"
