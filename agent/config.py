@@ -163,8 +163,7 @@ MODEL_PRESETS = {
     "claude-opus-4-7-medium": {
         "model_name": "claude-opus-4-7-medium",            # 代理端注册的模型名（带点号）
         "model_provider": "anthropic",
-        # "api_key": os.getenv("OPENSYS_ANTHROPIC_API_KEY", ""),
-        "api_key": "devin-session-token$eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uX2lkIjoid2luZHN1cmYtc2Vzc2lvbi05MWQ0OTY4YmM2ZTQ0NzE1YTc1NTg2YzJlMmZhNWQwYiJ9.bKhtppMof6SUo3D0EJ23ym0MzqpFNvFhTEtYstrwNVY",
+        "api_key": os.getenv("OPENSYS_ANTHROPIC_API_KEY", ""),
         "api_base": os.getenv("OPENSYS_ANTHROPIC_API_BASE", ""),
         "thinking_model": None,
         "isvision": True,
