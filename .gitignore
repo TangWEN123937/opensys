@@ -34,12 +34,18 @@ data/browser_data/
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/checkpoints.sqlite
+data/checkpoints.sqlite-*
 
 # 浏览器下载文件
 data/downloads/
 
 # 向量数据库
 data/chroma_db/
+
+# 运行期采集、导入文档和实验数据可能含个人/版权内容
+data/experience/
+data/documents/
 
 # 日志（定时任务日志、审计日志等）
 data/logs/
@@ -55,6 +61,12 @@ data/project.md
 
 # 权限配置（运行时生成）
 data/permissions.yaml
+
+# 本地插件启停状态与 noVNC 密码文件
+data/plugin_state.json
+data/.vnc_pass
+data/installed_plugins/
+data/.plugin_staging/
 
 # 输出目录（Agent 产出物）
 output/
